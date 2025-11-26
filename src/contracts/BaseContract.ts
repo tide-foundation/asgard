@@ -1,31 +1,33 @@
 import { Policy } from "../models/Policy";
 import BaseTideRequest from "../models/TideRequest";
 import { StringFromUint8Array } from "../utils/Serialization";
+import { TideMemory } from "../utils/TideMemory";
 
 
 export abstract class BaseContract{
     public abstract id: string;
     private tideRequest: BaseTideRequest;
     protected dokens: Doken[] = []; // change to Doken type
-    protected authorizedRequestPayload: Uint8Array;
-    protected informationalRequestPayload: Uint8Array;
+    protected authorizedRequestPayload: TideMemory;
+    protected informationalRequestPayload: TideMemory;
 
     /**
      * Inheritors must implement this
      * @param policy Policy object
      */
-    protected abstract test(policy: Policy): void;
+    protected abstract test(policy: Policy): Promise<void>;
 
     /**
      * To help with clients testing if their Tide Request will pass their contract's specified contract
      * @param policy Serialized policy from Tide
      * @returns 
      */
-    testPolicy(policy: Uint8Array): boolean {
-        const p = new Policy(policy);
+    async testPolicy(policy: Uint8Array | Policy): Promise<boolean> {
+        const p = policy instanceof Uint8Array ? new Policy(policy) : policy;
         if(p.contractId !== this.id) throw `Mismatch between policy provided's contract (${p.contractId}) and this contract's id (${this.id})`;
+        if(p.modelId !== this.tideRequest.id() && p.modelId !== "any") throw `Mismatch between policy provided model id (${p.modelId}) and tide request id (${this.tideRequest.id()})`
         try{
-            this.test(p);
+            await this.test(p);
             return true;
         }catch(ex){
             console.error(ex);
@@ -33,8 +35,8 @@ export abstract class BaseContract{
         }
     }
 
-    constructor(tideRequest: Uint8Array){
-        this.tideRequest = BaseTideRequest.decode(tideRequest);
+    constructor(tideRequest: Uint8Array | BaseTideRequest){
+        this.tideRequest = tideRequest instanceof Uint8Array ? BaseTideRequest.decode(tideRequest) : tideRequest;
         this.authorizedRequestPayload = this.tideRequest.draft;
         this.informationalRequestPayload = this.tideRequest.dyanmicData;
         

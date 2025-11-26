@@ -16,7 +16,7 @@ export default class BaseTideRequest {
     expiry: number;
     policy: TideMemory;
 
-    constructor(name: string, version: string, authFlow: string, draft: TideMemory, dyanmicData: TideMemory) {
+    constructor(name: string, version: string, authFlow: string, draft: Uint8Array, dyanmicData: Uint8Array) {
         this.name = name;
         this.version = version;
         this.authFlow = authFlow
@@ -167,7 +167,10 @@ export default class BaseTideRequest {
         return req;
     }
 
-    static decode(data: Uint8Array) {
+    static decode<T extends BaseTideRequest>(
+        this: new (name: string, version: string, authFlow: string, draft: Uint8Array, dynamicData: Uint8Array) => T,
+        data: Uint8Array
+    ) : T{
         const d = new TideMemory(data.length);
         d.set(data);
 
@@ -178,8 +181,8 @@ export default class BaseTideRequest {
         const version = new TextDecoder().decode(d.GetValue(1));
 
         // Check name and version in static members if set
-        if(this._name != undefined && this._version != undefined){
-            if(name != this._name || version != this._version) throw Error("Name and Version in decoded data don't match this object's set name and version.")
+        if((this as any)._name != undefined && (this as any)._version != undefined){
+            if(name != (this as any)._name || version != (this as any)._version) throw Error("Name and Version in decoded data don't match this object's set name and version.")
         }
 
         const expiry = BaseTideRequest.uint8ArrayToUint32LE(d.GetValue(2));

@@ -114,13 +114,47 @@ export class PolicyParameters {
         return params;
     }
 
+    getParameter<T extends string | number | bigint | boolean | Uint8Array>(key: string): T {
+        if (!this.entries.has(key)) {
+            throw new Error(`Parameter '${key}' not found`);
+        }
+
+        const value = this.entries.get(key);
+        const actualType = value instanceof Uint8Array ? 'Uint8Array' : typeof value;
+
+        // Type checking logic
+        let expectedType: string;
+        if ((value as any) instanceof Uint8Array) {
+            expectedType = 'Uint8Array';
+        } else {
+            expectedType = typeof value;
+        }
+
+        // Validate the type matches what was requested
+        // We can't directly check T at runtime, so we infer from the value type
+        const isCorrectType =
+            (typeof value === 'string' && value.constructor === String) ||
+            (typeof value === 'number' && value.constructor === Number) ||
+            (typeof value === 'bigint' && value.constructor === BigInt) ||
+            (typeof value === 'boolean' && value.constructor === Boolean) ||
+            (value instanceof Uint8Array);
+
+        if (!isCorrectType) {
+            throw new Error(
+                `Parameter '${key}' exists but has unexpected type '${actualType}'`
+            );
+        }
+
+        return value as T;
+    }
+
     toBytes(): Uint8Array {
         let params = [];
-        
+
         for (const [key, value] of this.entries) {
             const nameBytes = StringToUint8Array(key);
             let dataBytes, typeStr;
-            
+
             if (typeof value === 'string') {
                 dataBytes = StringToUint8Array(value);
                 typeStr = "str";
@@ -144,12 +178,12 @@ export class PolicyParameters {
                     `Could not serialize key '${key}' of type '${typeof value}'`
                 );
             }
-            
+
             const typeBytes = StringToUint8Array(typeStr);
             const paramMemory = TideMemory.CreateFromArray([nameBytes, typeBytes, dataBytes]);
             params.push(paramMemory);
         }
-        
+
         return TideMemory.CreateFromArray(params);
     }
 }

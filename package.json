@@ -2,10 +2,16 @@
   "name": "asgard",
   "version": "0.0.1",
   "description": "Vendor server-side libraries to validate and test Tide Security",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "rebuild": "npm run clean && npm run build"
   },
+  "files": [
+    "dist"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tide-foundation/asgard.git"
@@ -20,6 +26,7 @@
   },
   "homepage": "https://github.com/tide-foundation/asgard#readme",
   "devDependencies": {
+    "@types/node": "^24.10.1",
     "typescript": "^5.9.3"
   }
 }
