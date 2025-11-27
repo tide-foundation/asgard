@@ -1,3 +1,4 @@
+import { Doken } from "../contracts/BaseContract.js";
 import { TideMemory } from "../utils/TideMemory.js";
 import { Policy } from "./Policy.js";
 
@@ -79,7 +80,7 @@ export default class BaseTideRequest {
         return this;
     }
 
-    addPolicy(policy: Uint8Array){
+    addPolicy(policy: Uint8Array) {
         this.policy = new TideMemory(policy.length);
         this.policy.set(policy);
         return this;
@@ -107,37 +108,79 @@ export default class BaseTideRequest {
     }
 
     isInitialized(): boolean {
-        try{
+        try {
             // check that creation time and sig fields are present
-            if(this.authorization.GetValue(0).GetValue(0).length > 0 && this.authorization.GetValue(0).GetValue(1).length == 64) return true;
+            if (this.authorization.GetValue(0).GetValue(0).length > 0 && this.authorization.GetValue(0).GetValue(1).length == 64) return true;
             else return false;
-        }catch {
+        } catch {
             return false;
         }
     }
 
     getUniqueId(): string {
-        if(!this.isInitialized()) throw 'Must initialize request to generate unique id';
+        if (!this.isInitialized()) throw 'Must initialize request to generate unique id';
         const bytes = this.authorization.GetValue(0).GetValue(1) as Uint8Array;
         return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(''); // hex
     }
 
-    getInitializedTime(): number{
-        if(!this.isInitialized()) throw 'Must initialize request to get creation time';
+    getInitializedTime(): number {
+        if (!this.isInitialized()) throw 'Must initialize request to get creation time';
         const time_bytes = this.authorization.GetValue(0).GetValue(0);
         return BaseTideRequest.uint8ArrayToUint32LE(time_bytes);
     }
 
-    getCurrentApprovalCount(): number{
-        if(!this.isInitialized()) throw 'Must initialize request to get approval count';
+    getCurrentApprovalCount(): number {
+        if (!this.isInitialized()) throw 'Must initialize request to get approval count';
         let i = 0;
-        let res = {result: undefined};
-        while(this.authorizer.TryGetValue(i, res)){i++;}
+        let res = { result: undefined };
+        while (this.authorizer.TryGetValue(i, res)) { i++; }
         return i;
     }
 
-    getPolicy(): Policy{
+    getPolicy(): Policy {
         return new Policy(this.policy);
+    }
+
+    removeApproval(approvalVuid: string): boolean {
+        // find if there are any dokens with this approvalVuid
+        if (!this.isInitialized()) return false;
+        if (this.getCurrentApprovalCount() == 0) return false;
+
+        try {
+            // find doken and it's index
+            let i = 0;
+            let res = { result: new TideMemory() };
+            let dokenWithVuidFound = {};
+            let keepTheseDokensList = [];
+            let keepTheseApprovalSigs = [];
+            while (this.authorizer.TryGetValue(i, res)) {
+                const d = new Doken(res.result);
+                if (d.hasVuid(approvalVuid)) {
+                    dokenWithVuidFound = {
+                        index: i,
+                        value: d
+                    };
+                } else {
+                    keepTheseDokensList.push(res.result);
+                    keepTheseApprovalSigs.push(this.authorization.GetValue(1).GetValue(i));
+                }
+                i++;
+            }
+
+            // reconstruct authorizers and authorizer sigs of request
+            if (dokenWithVuidFound) {
+                const creationAuth = this.authorization.GetValue(0);
+                this.authorization = TideMemory.CreateFromArray([
+                    creationAuth,
+                    TideMemory.CreateFromArray(keepTheseApprovalSigs)
+                ]);
+                this.authorizer = TideMemory.CreateFromArray(keepTheseDokensList);
+                return true;
+            }else return false;
+        } catch (ex) {
+            console.error(ex);
+            return false;
+        }
     }
 
     encode() {
@@ -170,7 +213,7 @@ export default class BaseTideRequest {
     static decode<T extends BaseTideRequest>(
         this: new (name: string, version: string, authFlow: string, draft: Uint8Array, dynamicData: Uint8Array) => T,
         data: Uint8Array
-    ) : T{
+    ): T {
         const d = new TideMemory(data.length);
         d.set(data);
 
@@ -181,8 +224,8 @@ export default class BaseTideRequest {
         const version = new TextDecoder().decode(d.GetValue(1));
 
         // Check name and version in static members if set
-        if((this as any)._name != undefined && (this as any)._version != undefined){
-            if(name != (this as any)._name || version != (this as any)._version) throw Error("Name and Version in decoded data don't match this object's set name and version.")
+        if ((this as any)._name != undefined && (this as any)._version != undefined) {
+            if (name != (this as any)._name || version != (this as any)._version) throw Error("Name and Version in decoded data don't match this object's set name and version.")
         }
 
         const expiry = BaseTideRequest.uint8ArrayToUint32LE(d.GetValue(2));
@@ -211,7 +254,7 @@ export default class BaseTideRequest {
         return request;
     }
 
-    static uint32ToUint8ArrayLE(num: number): Uint8Array {
+    private static uint32ToUint8ArrayLE(num: number): Uint8Array {
         // We want 8 bytes to match .NET Int64 (long) layout: low 32 bits in first 4 bytes, rest zero.
         const arr = new Uint8Array(8);
 
@@ -225,7 +268,7 @@ export default class BaseTideRequest {
         return arr;
     }
 
-    static uint8ArrayToUint32LE(bytes: Uint8Array): number {
+    private static uint8ArrayToUint32LE(bytes: Uint8Array): number {
         if (bytes.length !== 8) {
             throw new Error("Expected 8 bytes for a 64-bit value");
         }

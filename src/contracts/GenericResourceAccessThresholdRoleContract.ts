@@ -2,7 +2,7 @@ import { Policy } from "../models/Policy";
 import { BaseContract } from "./BaseContract";
 
 export class GenericResourceAccessThresholdRoleContract extends BaseContract{
-    public id: string = "GenericResourceAccessThresholdRoleContract";
+    public id: string = "GenericResourceAccessThresholdRole:1";
     protected async test(policy: Policy): Promise<void> {
         let successfulDokens = 0;
         this.dokens.forEach(d => {

@@ -30,7 +30,7 @@ export abstract class BaseContract{
             await this.test(p);
             return true;
         }catch(ex){
-            console.error(ex);
+            console.error(this.id + " contract did not pass. Reason: " + ex);
             return false;
         }
     }
@@ -56,18 +56,63 @@ export abstract class BaseContract{
 export class Doken{
     private payload: any;
     constructor(d: Uint8Array){
-        const s = StringFromUint8Array(d).split(".");
-        if(s.length != 3) `Expected 3 parts in doken`;
-        this.payload = JSON.parse(base64UrlDecode(s[1])); // just payload needed
+        if(!d || d.length === 0){
+            throw new Error('Doken constructor: received empty or null Uint8Array');
+        }
+
+        const tokenString = StringFromUint8Array(d);
+        const s = tokenString.split(".");
+
+        if(s.length !== 3){
+            throw new Error(`Doken constructor: invalid token format. Expected 3 parts (header.payload.signature) but got ${s.length} parts in: "${tokenString.substring(0, 50)}..."`);
+        }
+
+        try{
+            const decodedPayload = base64UrlDecode(s[1]);
+            this.payload = JSON.parse(decodedPayload);
+        } catch(error){
+            throw new Error(`Doken constructor: failed to parse token payload. ${error instanceof Error ? error.message : String(error)}. Raw payload part: "${s[1].substring(0, 50)}..."`);
+        }
+
+        if(!this.payload || typeof this.payload !== 'object'){
+            throw new Error(`Doken constructor: parsed payload is not a valid object. Got type: ${typeof this.payload}`);
+        }
     }
     hasResourceAccessRole(role: string, client: string): boolean{
-        if(!role) throw 'Role is empty';
-        if(!client) throw 'Client is empty';
+        if(!role) throw new Error('hasResourceAccessRole: role parameter is empty or undefined');
+        if(!client) throw new Error('hasResourceAccessRole: client parameter is empty or undefined');
+
+        if(!this.payload.resource_access){
+            throw new Error(`hasResourceAccessRole: token payload does not contain 'resource_access' field. Available fields: ${Object.keys(this.payload).join(', ')}`);
+        }
+
+        if(!this.payload.resource_access[client]){
+            throw new Error(`hasResourceAccessRole: client '${client}' not found in resource_access. Available clients: ${Object.keys(this.payload.resource_access).join(', ')}`);
+        }
+
+        if(!Array.isArray(this.payload.resource_access[client].roles)){
+            throw new Error(`hasResourceAccessRole: 'roles' field for client '${client}' is not an array. Got type: ${typeof this.payload.resource_access[client].roles}`);
+        }
+
         return this.payload.resource_access[client].roles.includes(role);
     }
     hasRealmAccessRole(role: string): boolean{
-        if(!role) throw 'Role is empty';
+        if(!role) throw new Error('hasRealmAccessRole: role parameter is empty or undefined');
+
+        if(!this.payload.realm_access){
+            throw new Error(`hasRealmAccessRole: token payload does not contain 'realm_access' field. Available fields: ${Object.keys(this.payload).join(', ')}`);
+        }
+
+        if(!Array.isArray(this.payload.realm_access.roles)){
+            throw new Error(`hasRealmAccessRole: 'roles' field in realm_access is not an array. Got type: ${typeof this.payload.realm_access.roles}`);
+        }
+
         return this.payload.realm_access.roles.includes(role);
+    }
+    hasVuid(vuid: string): boolean{
+        if(!vuid) throw new Error('hasVuid: vuid cannot be null');
+        if(!this.payload.vuid) throw new Error("hasVuid: cannot find vuid in paylod");
+        return this.payload.vuid === vuid;
     }
 }
 

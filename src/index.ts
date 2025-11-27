@@ -5,6 +5,7 @@ import { TideMemory } from "./utils/TideMemory";
 import BaseTideRequest from "./models/TideRequest";
 import { Policy, PolicyParameters } from "./models/Policy";
 import CustomTideRequest from "./models/CustomTideRequest";
+import { base64toBytes } from "./utils/Serialization";
 
 export { GenericResourceAccessThresholdRoleContract }
 export { BaseContract };
