@@ -1,5 +1,5 @@
 {
-  "name": "asgard",
+  "name": "asgard-tide",
   "version": "0.0.1",
   "description": "Vendor server-side libraries to validate and test Tide Security",
   "main": "dist/index.js",
