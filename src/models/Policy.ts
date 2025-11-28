@@ -43,7 +43,7 @@ export class Policy{
     }
 
     toBytes(){
-        let d = [
+        let d: Uint8Array[] = [
             TideMemory.CreateFromArray([
                 StringToUint8Array(this.version),
                 StringToUint8Array(this.contractId),
@@ -51,6 +51,8 @@ export class Policy{
                 StringToUint8Array(this.keyId),
                 this.params.toBytes()
         ])];
+
+        if(this.signature) d.push(this.signature);
         
         return TideMemory.CreateFromArray(d);
     }

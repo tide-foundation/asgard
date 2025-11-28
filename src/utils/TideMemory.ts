@@ -1,7 +1,7 @@
 // Tide Memory Object helper functions from tide-js
 export class TideMemory extends Uint8Array{
     static CreateFromArray(datas: Uint8Array[]): TideMemory   {
-        if(datas.length == 0) return this.Create(new TideMemory(), 4);
+        if(datas.length == 0) return new TideMemory();
         const length = datas.reduce((sum, next) => sum + 4 + next.length, 0);
         const mem = this.Create(datas[0], length);
         for(let i = 1; i < datas.length; i++){

@@ -86,6 +86,10 @@ export default class BaseTideRequest {
         return this;
     }
 
+    hasPolicy(): boolean{
+        return this.policy.length != 0;
+    }
+
     async getRequestInitDetails() {
         const te = new TextEncoder();
         return {

@@ -30,7 +30,6 @@ export abstract class BaseContract{
             await this.test(p);
             return true;
         }catch(ex){
-            console.error(this.id + " contract did not pass. Reason: " + ex);
             return false;
         }
     }
