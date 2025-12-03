@@ -3,6 +3,10 @@ import BaseTideRequest from "../models/TideRequest";
 import { StringFromUint8Array } from "../utils/Serialization";
 import { TideMemory } from "../utils/TideMemory";
 
+interface PolicyRunResult{
+    failed?: unknown;
+    success: boolean
+}
 
 export abstract class BaseContract{
     public abstract id: string;
@@ -22,15 +26,20 @@ export abstract class BaseContract{
      * @param policy Serialized policy from Tide
      * @returns 
      */
-    async testPolicy(policy: Uint8Array | Policy): Promise<boolean> {
+    async testPolicy(policy: Uint8Array | Policy): Promise<PolicyRunResult> {
         const p = policy instanceof Uint8Array ? new Policy(policy) : policy;
         if(p.contractId !== this.id) throw `Mismatch between policy provided's contract (${p.contractId}) and this contract's id (${this.id})`;
         if(p.modelId !== this.tideRequest.id() && p.modelId !== "any") throw `Mismatch between policy provided model id (${p.modelId}) and tide request id (${this.tideRequest.id()})`
         try{
             await this.test(p);
-            return true;
+            return {
+                success: true
+            };
         }catch(ex){
-            return false;
+            return {
+                success: false,
+                failed: ex
+            };
         }
     }
 
