@@ -3,7 +3,7 @@ import { GenericResourceAccessThresholdRoleContract } from "./contracts/GenericR
 import { GenericRealmAccessThresholdRoleContract } from "./contracts/GenericRealmAccessThresholdRoleContract";
 import { TideMemory } from "./utils/TideMemory";
 import BaseTideRequest from "./models/TideRequest";
-import { Policy, PolicyParameters } from "./models/Policy";
+import { Policy, PolicyParameters, ApprovalType, ExecutionType, PolicyData } from "./models/Policy";
 import CustomTideRequest from "./models/CustomTideRequest";
 import { base64toBytes } from "./utils/Serialization";
 
@@ -11,6 +11,6 @@ export { GenericResourceAccessThresholdRoleContract }
 export { BaseContract };
 export { TideMemory }
 export { BaseTideRequest }
-export { Policy, PolicyParameters }
+export { Policy, PolicyParameters, ApprovalType, ExecutionType, PolicyData }
 export { GenericRealmAccessThresholdRoleContract }
 export { CustomTideRequest }

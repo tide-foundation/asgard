@@ -1,18 +1,33 @@
 import { TideMemory } from "../utils/TideMemory";
 import { BigIntToByteArray, BigIntFromByteArray, StringFromUint8Array, StringToUint8Array } from "../utils/Serialization";
 
-export class Policy{
+export type ApprovalType = "EXPLICIT" | "IMPLICIT";
+export type ExecutionType = "Private" | "Public";
+
+export interface PolicyData {
     version: string;
     contractId: string;
     modelId: string;
     keyId: string;
+    params: Map<string, any>;
+    approvalType?: ApprovalType;
+    executionType?: ExecutionType;
+}
+
+export class Policy {
+    version: string;
+    contractId: string;
+    modelId: string;
+    keyId: string;
+    approvalType: ApprovalType;
+    executionType: ExecutionType;
     params: PolicyParameters;
 
     dataToVerify: TideMemory | undefined;
     signature: Uint8Array | undefined;
 
-    constructor(data: {version: string, contractId: string, modelId: string, keyId: string, params: Map<string, any>} | TideMemory | Uint8Array){
-        if(data instanceof Uint8Array){
+    constructor(data: PolicyData | TideMemory | Uint8Array) {
+        if (data instanceof Uint8Array) {
             const d = new TideMemory(data.length);
             d.set(data);
 
@@ -21,39 +36,79 @@ export class Policy{
             this.contractId = StringFromUint8Array(this.dataToVerify.GetValue(1));
             this.modelId = StringFromUint8Array(this.dataToVerify.GetValue(2));
             this.keyId = StringFromUint8Array(this.dataToVerify.GetValue(3));
-            this.params = new PolicyParameters(this.dataToVerify.GetValue(4));
 
-            const sigRes = {result:undefined};
-            if(d.TryGetValue(1, sigRes)){
+            // Version 2 has approvalType and executionType at indices 4 and 5
+            if (this.version === "2") {
+                this.approvalType = StringFromUint8Array(this.dataToVerify.GetValue(4)) as ApprovalType;
+                this.executionType = StringFromUint8Array(this.dataToVerify.GetValue(5)) as ExecutionType;
+                this.params = new PolicyParameters(this.dataToVerify.GetValue(6));
+            } else {
+                // Version 1: defaults for approvalType and executionType
+                this.approvalType = "EXPLICIT";
+                this.executionType = "Public";
+                this.params = new PolicyParameters(this.dataToVerify.GetValue(4));
+            }
+
+            const sigRes = { result: undefined };
+            if (d.TryGetValue(1, sigRes)) {
                 this.signature = sigRes.result;
             }
-        }else{
-            if(typeof data["version"] !== "string") throw 'Version is not a string';
+        } else {
+            if (typeof data["version"] !== "string") throw 'Version is not a string';
             this.version = data["version"];
-            if(typeof data["contractId"] !== "string") throw 'ContractId is not a string';
+            if (typeof data["contractId"] !== "string") throw 'ContractId is not a string';
             this.contractId = data["contractId"];
-            if(typeof data["modelId"] !== "string") throw 'ModelId is not a string';
+            if (typeof data["modelId"] !== "string") throw 'ModelId is not a string';
             this.modelId = data["modelId"];
-            if(typeof data["keyId"] !== "string") throw 'KeyId is not a string';
+            if (typeof data["keyId"] !== "string") throw 'KeyId is not a string';
             this.keyId = data["keyId"];
 
-            if(!data["params"]) throw 'Params is null';
+            // For version 2, require approvalType and executionType
+            if (this.version === "2") {
+                if (!data["approvalType"]) throw 'Version 2 requires approvalType';
+                if (!data["executionType"]) throw 'Version 2 requires executionType';
+                this.approvalType = data["approvalType"];
+                this.executionType = data["executionType"];
+            } else {
+                // Version 1: use defaults
+                this.approvalType = data["approvalType"] ?? "EXPLICIT";
+                this.executionType = data["executionType"] ?? "Public";
+            }
+
+            if (!data["params"]) throw 'Params is null';
             this.params = new PolicyParameters(data["params"]);
         }
     }
 
-    toBytes(){
-        let d: Uint8Array[] = [
-            TideMemory.CreateFromArray([
+    toBytes() {
+        let fields: Uint8Array[];
+
+        if (this.version === "2") {
+            // Version 2: 7 fields
+            fields = [
+                StringToUint8Array(this.version),
+                StringToUint8Array(this.contractId),
+                StringToUint8Array(this.modelId),
+                StringToUint8Array(this.keyId),
+                StringToUint8Array(this.approvalType),
+                StringToUint8Array(this.executionType),
+                this.params.toBytes()
+            ];
+        } else {
+            // Version 1: 5 fields
+            fields = [
                 StringToUint8Array(this.version),
                 StringToUint8Array(this.contractId),
                 StringToUint8Array(this.modelId),
                 StringToUint8Array(this.keyId),
                 this.params.toBytes()
-        ])];
+            ];
+        }
 
-        if(this.signature) d.push(this.signature);
-        
+        let d: Uint8Array[] = [TideMemory.CreateFromArray(fields)];
+
+        if (this.signature) d.push(this.signature);
+
         return TideMemory.CreateFromArray(d);
     }
 }
