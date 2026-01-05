@@ -1,4 +1,4 @@
-import { Policy } from "../models/Policy";
+import { ApprovalType, ExecutionType, Policy } from "../models/Policy";
 import BaseTideRequest from "../models/TideRequest";
 import { StringFromUint8Array } from "../utils/Serialization";
 import { TideMemory } from "../utils/TideMemory";
@@ -11,7 +11,7 @@ interface PolicyRunResult{
 export abstract class BaseContract{
     public abstract id: string;
     private tideRequest: BaseTideRequest;
-    protected dokens: Doken[] = []; // change to Doken type
+    private dokens: Doken[] = []; // change to Doken type
     protected authorizedRequestPayload: TideMemory;
     protected informationalRequestPayload: TideMemory;
 
@@ -19,19 +19,42 @@ export abstract class BaseContract{
      * Inheritors must implement this
      * @param policy Policy object
      */
-    protected abstract test(policy: Policy): Promise<void>;
+    protected abstract validateData(policy: Policy): Promise<void>;
+
+    /**
+     * Inheritors must implement this if the policy has set it's approvalType to EXPLICIT
+     * @param policy Policy object
+     * @param approverDokens Approver Dokens
+     */
+    protected validateApprovers(policy: Policy, approverDokens: Doken[]): Promise<void>{
+        throw `validateApprovers not implemented`;
+    }
+
+    /**
+     * Inheritors must implement this if the policy has set it's executionType to PRIVATE
+     * @param policy Policy object
+     * @param executorDoken Executor Doken
+     */
+    protected validateExecutor(policy: Policy, executorDoken: Doken): Promise<void>{
+        throw `validateExecutor not implemented`;
+    }
 
     /**
      * To help with clients testing if their Tide Request will pass their contract's specified contract
      * @param policy Serialized policy from Tide
      * @returns 
      */
-    async testPolicy(policy: Uint8Array | Policy): Promise<PolicyRunResult> {
-        const p = policy instanceof Uint8Array ? new Policy(policy) : policy;
+    async testPolicy(policy: Uint8Array | Policy, executorDoken : string | undefined = null): Promise<PolicyRunResult> {
+        const p = policy instanceof Uint8Array ? Policy.from(policy) : policy;
         if(p.contractId !== this.id) throw `Mismatch between policy provided's contract (${p.contractId}) and this contract's id (${this.id})`;
         if(p.modelId !== this.tideRequest.id() && p.modelId !== "any") throw `Mismatch between policy provided model id (${p.modelId}) and tide request id (${this.tideRequest.id()})`
         try{
-            await this.test(p);
+            await this.validateData(p);
+            if(p.approvalType == ApprovalType.EXPLICIT) await this.validateApprovers(p, this.dokens);
+            if(p.executionType == ExecutionType.Private){
+                if(!executorDoken) throw `Policy as set it's execution type to PRIVATE. You must test this with the doken of the executor`;
+                await this.validateExecutor(p, new Doken(executorDoken));
+            }
             return {
                 success: true
             };
@@ -63,12 +86,12 @@ export abstract class BaseContract{
 
 export class Doken{
     private payload: any;
-    constructor(d: Uint8Array){
+    constructor(d: Uint8Array | string){
         if(!d || d.length === 0){
             throw new Error('Doken constructor: received empty or null Uint8Array');
         }
 
-        const tokenString = StringFromUint8Array(d);
+        const tokenString = typeof d === "string" ? d : StringFromUint8Array(d);
         const s = tokenString.split(".");
 
         if(s.length !== 3){

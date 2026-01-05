@@ -1,11 +1,14 @@
 import { Policy } from "../models/Policy";
-import { BaseContract } from "./BaseContract";
+import { BaseContract, Doken } from "./BaseContract";
 
 export class GenericResourceAccessThresholdRoleContract extends BaseContract{
     public id: string = "GenericResourceAccessThresholdRole:1";
-    protected async test(policy: Policy): Promise<void> {
+    protected validateData(policy: Policy): Promise<void> {
+        throw new Error("validateData not implemented.");
+    }
+    protected async validateApprovers(policy: Policy, approverDokens: Doken[]): Promise<void> {
         let successfulDokens = 0;
-        this.dokens.forEach(d => {
+        approverDokens.forEach(d => {
             if(d.hasResourceAccessRole(policy.params.getParameter<string>("role"), policy.params.getParameter<string>("resource"))) successfulDokens++;
         })
         const threshold = policy.params.getParameter<number>("threshold");

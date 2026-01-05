@@ -1,11 +1,14 @@
 import { Policy } from "../models/Policy";
-import { BaseContract } from "./BaseContract";
+import { BaseContract, Doken } from "./BaseContract";
 
 export class GenericRealmAccessThresholdRoleContract extends BaseContract{
+    protected validateData(policy: Policy): Promise<void> {
+        throw new Error("validateData not implemented.");
+    }
     public id: string = "GenericRealmAccessThresholdRole:1";
-    protected async test(policy: Policy): Promise<void> {
+    protected async validateApprovers(policy: Policy, approverDokens: Doken[]): Promise<void> {
         let successfulDokens = 0;
-        this.dokens.forEach(d => {
+        approverDokens.forEach(d => {
             if(d.hasRealmAccessRole(policy.params.getParameter<string>("role"))) successfulDokens++;
         })
         const threshold = policy.params.getParameter<number>("threshold");
