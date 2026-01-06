@@ -1,4 +1,4 @@
-import { Policy } from "../models/Policy";
+import { ApprovalType, ExecutionType, Policy } from "../models/Policy";
 import BaseTideRequest from "../models/TideRequest";
 import { StringFromUint8Array } from "../utils/Serialization";
 import { TideMemory } from "../utils/TideMemory";
@@ -11,7 +11,7 @@ interface PolicyRunResult{
 export abstract class BaseContract{
     public abstract id: string;
     private tideRequest: BaseTideRequest;
-    protected dokens: Doken[] = []; // change to Doken type
+    private dokens: Doken[] = []; // change to Doken type
     protected authorizedRequestPayload: TideMemory;
     protected informationalRequestPayload: TideMemory;
 
@@ -19,19 +19,42 @@ export abstract class BaseContract{
      * Inheritors must implement this
      * @param policy Policy object
      */
-    protected abstract test(policy: Policy): Promise<void>;
+    protected abstract validateData(policy: Policy): Promise<void>;
+
+    /**
+     * Inheritors must implement this if the policy has set it's approvalType to EXPLICIT
+     * @param policy Policy object
+     * @param approverDokens Approver Dokens
+     */
+    protected validateApprovers(policy: Policy, approverDokens: Doken[]): Promise<void>{
+        throw `validateApprovers not implemented`;
+    }
+
+    /**
+     * Inheritors must implement this if the policy has set it's executionType to PRIVATE
+     * @param policy Policy object
+     * @param executorDoken Executor Doken
+     */
+    protected validateExecutor(policy: Policy, executorDoken: Doken): Promise<void>{
+        throw `validateExecutor not implemented`;
+    }
 
     /**
      * To help with clients testing if their Tide Request will pass their contract's specified contract
      * @param policy Serialized policy from Tide
      * @returns 
      */
-    async testPolicy(policy: Uint8Array | Policy): Promise<PolicyRunResult> {
-        const p = policy instanceof Uint8Array ? new Policy(policy) : policy;
+    async testPolicy(policy: Uint8Array | Policy, executorDoken : string | undefined = null): Promise<PolicyRunResult> {
+        const p = policy instanceof Uint8Array ? Policy.from(policy) : policy;
         if(p.contractId !== this.id) throw `Mismatch between policy provided's contract (${p.contractId}) and this contract's id (${this.id})`;
         if(p.modelId !== this.tideRequest.id() && p.modelId !== "any") throw `Mismatch between policy provided model id (${p.modelId}) and tide request id (${this.tideRequest.id()})`
         try{
-            await this.test(p);
+            await this.validateData(p);
+            if(p.approvalType == ApprovalType.EXPLICIT) await this.validateApprovers(p, this.dokens);
+            if(p.executionType == ExecutionType.PRIVATE){
+                if(!executorDoken) throw `Policy as set it's execution type to PRIVATE. You must test this with the doken of the executor`;
+                await this.validateExecutor(p, new Doken(executorDoken));
+            }
             return {
                 success: true
             };
@@ -63,12 +86,12 @@ export abstract class BaseContract{
 
 export class Doken{
     private payload: any;
-    constructor(d: Uint8Array){
+    constructor(d: Uint8Array | string){
         if(!d || d.length === 0){
             throw new Error('Doken constructor: received empty or null Uint8Array');
         }
 
-        const tokenString = StringFromUint8Array(d);
+        const tokenString = typeof d === "string" ? d : StringFromUint8Array(d);
         const s = tokenString.split(".");
 
         if(s.length !== 3){
@@ -91,15 +114,15 @@ export class Doken{
         if(!client) throw new Error('hasResourceAccessRole: client parameter is empty or undefined');
 
         if(!this.payload.resource_access){
-            throw new Error(`hasResourceAccessRole: token payload does not contain 'resource_access' field. Available fields: ${Object.keys(this.payload).join(', ')}`);
+            return false;
         }
 
         if(!this.payload.resource_access[client]){
-            throw new Error(`hasResourceAccessRole: client '${client}' not found in resource_access. Available clients: ${Object.keys(this.payload.resource_access).join(', ')}`);
+            return false;
         }
 
         if(!Array.isArray(this.payload.resource_access[client].roles)){
-            throw new Error(`hasResourceAccessRole: 'roles' field for client '${client}' is not an array. Got type: ${typeof this.payload.resource_access[client].roles}`);
+            return false;
         }
 
         return this.payload.resource_access[client].roles.includes(role);
@@ -108,11 +131,11 @@ export class Doken{
         if(!role) throw new Error('hasRealmAccessRole: role parameter is empty or undefined');
 
         if(!this.payload.realm_access){
-            throw new Error(`hasRealmAccessRole: token payload does not contain 'realm_access' field. Available fields: ${Object.keys(this.payload).join(', ')}`);
+            return false;
         }
 
         if(!Array.isArray(this.payload.realm_access.roles)){
-            throw new Error(`hasRealmAccessRole: 'roles' field in realm_access is not an array. Got type: ${typeof this.payload.realm_access.roles}`);
+            return false;
         }
 
         return this.payload.realm_access.roles.includes(role);
