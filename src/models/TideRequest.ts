@@ -142,7 +142,7 @@ export default class BaseTideRequest {
     }
 
     getPolicy(): Policy {
-        return new Policy(this.policy);
+        return Policy.from(this.policy);
     }
 
     removeApproval(approvalVuid: string): boolean {
