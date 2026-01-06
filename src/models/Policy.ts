@@ -1,15 +1,15 @@
 import { TideMemory } from "../utils/TideMemory";
 import { BigIntToByteArray, BigIntFromByteArray, StringFromUint8Array, StringToUint8Array } from "../utils/Serialization";
 
-export enum ApprovalType{
+export enum ApprovalType {
     EXPLICIT,
     IMPLICIT
 }
-export enum ExecutionType{
-    Private,
-    Public
+export enum ExecutionType {
+    PRIVATE,
+    PUBLIC
 }
-export class Policy{
+export class Policy {
     static latestVersion: string = "2";
     version: string;
     contractId: string;
@@ -22,39 +22,48 @@ export class Policy{
     dataToVerify: TideMemory | undefined;
     signature: Uint8Array | undefined;
 
-    constructor(data: {version: string, contractId: string, modelId: string, keyId: string, approvalType: ApprovalType, executionType: ExecutionType, params: Map<string, any> | PolicyParameters}){
-        if(typeof data["version"] !== "string") throw 'Version is not a string';
+    constructor(data: { version: string, contractId: string, modelId: string, keyId: string, approvalType: ApprovalType, executionType: ExecutionType, params: Map<string, any> | PolicyParameters }) {
+        if (typeof data["version"] !== "string") throw 'Version is not a string';
         this.version = data["version"];
-        if(typeof data["contractId"] !== "string") throw 'ContractId is not a string';
+        if (typeof data["contractId"] !== "string") throw 'ContractId is not a string';
         this.contractId = data["contractId"];
-        if(typeof data["modelId"] !== "string") throw 'ModelId is not a string';
+        if (typeof data["modelId"] !== "string") throw 'ModelId is not a string';
         this.modelId = data["modelId"];
-        if(typeof data["keyId"] !== "string") throw 'KeyId is not a string';
+        if (typeof data["keyId"] !== "string") throw 'KeyId is not a string';
         this.keyId = data["keyId"];
 
         this.approvalType = data.approvalType;
         this.executionType = data.executionType;
 
-        if(!data["params"]) throw 'Params is null';
+        if (!data["params"]) throw 'Params is null';
         this.params = data["params"] instanceof PolicyParameters ? data["params"] : new PolicyParameters(data["params"]);
+
+        this.dataToVerify = TideMemory.CreateFromArray([
+            StringToUint8Array(this.version),
+            StringToUint8Array(this.contractId),
+            StringToUint8Array(this.modelId),
+            StringToUint8Array(this.keyId),
+            StringToUint8Array(ApprovalType[this.approvalType]),
+            StringToUint8Array(ExecutionType[this.executionType]),
+            this.params.toBytes()]);
     }
 
-    static from(data: Uint8Array): Policy{
+    static from(data: Uint8Array): Policy {
         const d = new TideMemory(data.length);
         d.set(data);
 
         const dataToVerify = d.GetValue(0);
         const version = StringFromUint8Array(dataToVerify.GetValue(0));
-        if(version != Policy.latestVersion){
+        if (version != Policy.latestVersion) {
             // old version
-            switch(version){
+            switch (version) {
                 case PolicyV1.thisVersion:
                     return PolicyV1.from(d);
                 default:
                     throw Error("Unknown policy version: " + version);
             }
         }
-        
+
         const contractId = StringFromUint8Array(dataToVerify.GetValue(1));
         const modelId = StringFromUint8Array(dataToVerify.GetValue(2));
         const keyId = StringFromUint8Array(dataToVerify.GetValue(3));
@@ -73,38 +82,38 @@ export class Policy{
             params
         });
 
-        const sigRes = {result:undefined};
-        if(d.TryGetValue(1, sigRes)){
+        const sigRes = { result: undefined };
+        if (d.TryGetValue(1, sigRes)) {
             p.signature = sigRes.result;
         }
         return p;
     }
 
-    toBytes(){
+    toBytes() {
         let d: Uint8Array[] = [
             TideMemory.CreateFromArray([
                 StringToUint8Array(this.version),
                 StringToUint8Array(this.contractId),
                 StringToUint8Array(this.modelId),
                 StringToUint8Array(this.keyId),
-                StringToUint8Array(this.approvalType.toString()),
-                StringToUint8Array(this.executionType.toString()),
+                StringToUint8Array(ApprovalType[this.approvalType]),
+                StringToUint8Array(ExecutionType[this.executionType]),
                 this.params.toBytes()
-        ])];
+            ])];
 
-        if(this.signature) d.push(this.signature);
-        
+        if (this.signature) d.push(this.signature);
+
         return TideMemory.CreateFromArray(d);
     }
 }
 
 export class PolicyParameters {
-    entries : Map<string, any>;
+    entries: Map<string, any>;
     constructor(data: Map<string, any> | Uint8Array) {
-        if(data instanceof Uint8Array){
+        if (data instanceof Uint8Array) {
             this.entries = PolicyParameters.fromBytes(data);
-        }else{
-             this.entries = new Map(data);
+        } else {
+            this.entries = new Map(data);
         }
     }
 
@@ -154,6 +163,14 @@ export class PolicyParameters {
             i++;
         }
         return params;
+    }
+
+    tryGetParameter<T extends string | number | bigint | boolean | Uint8Array>(key: string): [boolean, T]{
+        try{
+            return [true, this.getParameter(key)];
+        }catch{
+            return [false, null];
+        }
     }
 
     getParameter<T extends string | number | bigint | boolean | Uint8Array>(key: string): T {
@@ -230,16 +247,16 @@ export class PolicyParameters {
     }
 }
 
-class PolicyV1 extends Policy{
+class PolicyV1 extends Policy {
     static thisVersion = "1";
     version: string = PolicyV1.thisVersion;
     static from(data: TideMemory): Policy {
         const dataToVerify = data.GetValue(0);
         const v = StringFromUint8Array(dataToVerify.GetValue(0));
-        if(v != PolicyV1.thisVersion){
+        if (v != PolicyV1.thisVersion) {
             throw Error("Dev error");
         }
-        
+
         const contractId = StringFromUint8Array(dataToVerify.GetValue(1));
         const modelId = StringFromUint8Array(dataToVerify.GetValue(2));
         const keyId = StringFromUint8Array(dataToVerify.GetValue(3));
@@ -252,18 +269,18 @@ class PolicyV1 extends Policy{
             modelId,
             keyId,
             approvalType: ApprovalType.EXPLICIT, // didn't exist on v1 so this is default
-            executionType: ExecutionType.Public, // didn't exist on v1 so this is default
+            executionType: ExecutionType.PUBLIC, // didn't exist on v1 so this is default
             params
         });
 
-        const sigRes = {result:undefined};
-        if(data.TryGetValue(1, sigRes)){
+        const sigRes = { result: undefined };
+        if (data.TryGetValue(1, sigRes)) {
             p.signature = sigRes.result;
         }
 
         return p;
     }
-    toBytes(){
+    toBytes() {
         let d: Uint8Array[] = [
             TideMemory.CreateFromArray([
                 StringToUint8Array(PolicyV1.thisVersion),
@@ -271,10 +288,10 @@ class PolicyV1 extends Policy{
                 StringToUint8Array(this.modelId),
                 StringToUint8Array(this.keyId),
                 this.params.toBytes()
-        ])];
+            ])];
 
-        if(this.signature) d.push(this.signature);
-        
+        if (this.signature) d.push(this.signature);
+
         return TideMemory.CreateFromArray(d);
     }
 }

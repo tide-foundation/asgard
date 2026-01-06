@@ -3,7 +3,8 @@ import { BaseContract, Doken } from "./BaseContract";
 
 export class GenericRealmAccessThresholdRoleContract extends BaseContract{
     protected validateData(policy: Policy): Promise<void> {
-        throw new Error("validateData not implemented.");
+        console.warn("Validate Data not implemented!");
+        return;
     }
     public id: string = "GenericRealmAccessThresholdRole:1";
     protected async validateApprovers(policy: Policy, approverDokens: Doken[]): Promise<void> {

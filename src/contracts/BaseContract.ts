@@ -51,7 +51,7 @@ export abstract class BaseContract{
         try{
             await this.validateData(p);
             if(p.approvalType == ApprovalType.EXPLICIT) await this.validateApprovers(p, this.dokens);
-            if(p.executionType == ExecutionType.Private){
+            if(p.executionType == ExecutionType.PRIVATE){
                 if(!executorDoken) throw `Policy as set it's execution type to PRIVATE. You must test this with the doken of the executor`;
                 await this.validateExecutor(p, new Doken(executorDoken));
             }
@@ -114,15 +114,15 @@ export class Doken{
         if(!client) throw new Error('hasResourceAccessRole: client parameter is empty or undefined');
 
         if(!this.payload.resource_access){
-            throw new Error(`hasResourceAccessRole: token payload does not contain 'resource_access' field. Available fields: ${Object.keys(this.payload).join(', ')}`);
+            return false;
         }
 
         if(!this.payload.resource_access[client]){
-            throw new Error(`hasResourceAccessRole: client '${client}' not found in resource_access. Available clients: ${Object.keys(this.payload.resource_access).join(', ')}`);
+            return false;
         }
 
         if(!Array.isArray(this.payload.resource_access[client].roles)){
-            throw new Error(`hasResourceAccessRole: 'roles' field for client '${client}' is not an array. Got type: ${typeof this.payload.resource_access[client].roles}`);
+            return false;
         }
 
         return this.payload.resource_access[client].roles.includes(role);
@@ -131,11 +131,11 @@ export class Doken{
         if(!role) throw new Error('hasRealmAccessRole: role parameter is empty or undefined');
 
         if(!this.payload.realm_access){
-            throw new Error(`hasRealmAccessRole: token payload does not contain 'realm_access' field. Available fields: ${Object.keys(this.payload).join(', ')}`);
+            return false;
         }
 
         if(!Array.isArray(this.payload.realm_access.roles)){
-            throw new Error(`hasRealmAccessRole: 'roles' field in realm_access is not an array. Got type: ${typeof this.payload.realm_access.roles}`);
+            return false;
         }
 
         return this.payload.realm_access.roles.includes(role);

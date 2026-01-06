@@ -4,7 +4,8 @@ import { BaseContract, Doken } from "./BaseContract";
 export class GenericResourceAccessThresholdRoleContract extends BaseContract{
     public id: string = "GenericResourceAccessThresholdRole:1";
     protected validateData(policy: Policy): Promise<void> {
-        throw new Error("validateData not implemented.");
+        console.warn("Validate Data not implemented!");
+        return;
     }
     protected async validateApprovers(policy: Policy, approverDokens: Doken[]): Promise<void> {
         let successfulDokens = 0;
