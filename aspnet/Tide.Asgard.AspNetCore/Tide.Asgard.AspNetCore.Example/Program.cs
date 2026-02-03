@@ -1,3 +1,4 @@
+using Auth0.AspNetCore.Authentication.Api;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Tide.Asgard.AspNetCore.Authentication;
 using Tide.Asgard.AspNetCore.Authentication.DPoP;
@@ -9,8 +10,7 @@ builder.Services.AddControllers();
 var keycloak = builder.Configuration.GetSection("Keycloak");
 
 builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddAsgardAuthentication(JwtBearerDefaults.AuthenticationScheme, options =>
+    .AddAsgardAuthentication(options =>
     {
         // Keycloak realm URL acts as both authority and issuer
         options.Authority = keycloak["Authority"];
