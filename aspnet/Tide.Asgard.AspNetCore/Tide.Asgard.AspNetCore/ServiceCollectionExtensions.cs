@@ -15,17 +15,17 @@ namespace Tide.Asgard.AspNetCore.Authentication;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
-    /// <summary>
-    ///     Adds Asgard API authentication to the specified <see cref="IServiceCollection" />.
-    /// </summary>
-    /// <param name="services">The service collection to add authentication to.</param>
-    /// <param name="configureOptions">An action to configure the <see cref="Auth0ApiOptions" />.</param>
-    /// <returns>An <see cref="Auth0ApiAuthenticationBuilder" /> for further configuration.</returns>
-    /// <exception cref="ArgumentNullException">
-    ///     Thrown when <paramref name="services" /> or
-    ///     <paramref name="configureOptions" /> is null.
-    /// </exception>
-    public static AsgardAuthenticationBuilder AddAsgardAuthentication(
+	/// <summary>
+	///     Adds Asgard API authentication to the specified <see cref="IServiceCollection" />.
+	/// </summary>
+	/// <param name="services">The service collection to add authentication to.</param>
+	/// <param name="configureOptions">An action to configure the <see cref="JwtBearerOptions" />.</param>
+	/// <returns>An <see cref="AsgardAuthenticationBuilder" /> for further configuration.</returns>
+	/// <exception cref="ArgumentNullException">
+	///     Thrown when <paramref name="services" /> or
+	///     <paramref name="configureOptions" /> is null.
+	/// </exception>
+	public static AsgardAuthenticationBuilder AddAsgardAuthentication(
         this IServiceCollection services,
         Action<JwtBearerOptions>? configureOptions)
     {
@@ -36,19 +36,19 @@ public static class ServiceCollectionExtensions
             .AddAsgardAuthentication(JwtBearerDefaults.AuthenticationScheme, configureOptions);
     }
 
-    /// <summary>
-    ///     Adds Asgard API authentication to the specified <see cref="IServiceCollection" />.
-    /// </summary>
-    /// <param name="services">The service collection to add authentication to.</param>
-    /// <param name="authenticationScheme">The authentication scheme to use.</param>
-    /// <param name="configureOptions">An action to configure the <see cref="Auth0ApiOptions" />.</param>
-    /// <returns>An <see cref="Auth0ApiAuthenticationBuilder" /> for further configuration.</returns>
-    /// <exception cref="ArgumentNullException">
-    ///     Thrown when <paramref name="services" /> or
-    ///     <paramref name="configureOptions" /> is null.
-    /// </exception>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="authenticationScheme" /> is null or empty.</exception>
-    public static AsgardAuthenticationBuilder AddAuth0ApiAuthentication(this IServiceCollection services,
+	/// <summary>
+	///     Adds Asgard API authentication to the specified <see cref="IServiceCollection" />.
+	/// </summary>
+	/// <param name="services">The service collection to add authentication to.</param>
+	/// <param name="authenticationScheme">The authentication scheme to use.</param>
+	/// <param name="configureOptions">An action to configure the <see cref="JwtBearerOptions" />.</param>
+	/// <returns>An <see cref="AsgardAuthenticationBuilder" /> for further configuration.</returns>
+	/// <exception cref="ArgumentNullException">
+	///     Thrown when <paramref name="services" /> or
+	///     <paramref name="configureOptions" /> is null.
+	/// </exception>
+	/// <exception cref="ArgumentException">Thrown when <paramref name="authenticationScheme" /> is null or empty.</exception>
+	public static AsgardAuthenticationBuilder AddAsgardAuthentication(this IServiceCollection services,
         string? authenticationScheme, Action<JwtBearerOptions>? configureOptions)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(authenticationScheme, nameof(authenticationScheme));
