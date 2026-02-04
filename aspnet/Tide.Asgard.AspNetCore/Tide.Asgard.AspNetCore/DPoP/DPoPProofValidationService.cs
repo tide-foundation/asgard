@@ -1,3 +1,7 @@
+// Copyright (c) Okta, Inc. and/or its affiliates. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
+// Modifications Copyright (c) Tide Foundation Limited.
+
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,7 +15,7 @@ namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
 
 /// <summary>
 ///     Service for validating DPoP (Demonstration of Proof-of-Possession) proof tokens
-///     according to the Auth0 and OAuth DPoP specifications.
+///     according to the OAuth DPoP specifications.
 /// </summary>
 public class DPoPProofValidationService : IDPoPProofValidationService
 {

@@ -101,3 +101,12 @@ There are 3 types of `CustomRequest` on Tide - each intended to best fit your sp
 3. `DynamicPayloadApprovedCustomRequest` - A request with the data to be signed in the dynamic part of the request that also requires `explicit` approval from the users. This requires the use of a Human Readable object in the authorized payload to ensure the details shown to an approver at approval time can be verified against the signing data added to the request dynamically later.
 
 ### Basic Contract Test Validation
+
+## License
+
+This project is dual-licensed:
+
+- **TypeScript libraries** (`src/`): Licensed under the [Tide Community Open Code License](LICENSE).
+- **ASP.NET Core libraries** (`aspnet/`): Derived from the [Auth0 ASP.NET Core Authentication API](https://github.com/auth0/aspnetcore-api), which is licensed under the [Apache License 2.0](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/LICENSE-APACHE-2.0). Modifications by Tide Foundation Limited are subject to both the Apache 2.0 license (for the derived portions) and the Tide Community Open Code License (for new additions).
+
+See the [NOTICE](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/NOTICE) file in the ASP.NET Core project for full attribution details.

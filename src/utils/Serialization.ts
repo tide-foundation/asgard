@@ -1,3 +1,6 @@
+// Copyright (c) Tide Foundation Limited. All rights reserved.
+// Licensed under the Tide Community Open Code License. See LICENSE in the project root.
+
 const base64abc = [
 	"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
 	"N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",

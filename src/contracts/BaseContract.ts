@@ -1,3 +1,6 @@
+// Copyright (c) Tide Foundation Limited. All rights reserved.
+// Licensed under the Tide Community Open Code License. See LICENSE in the project root.
+
 import { ApprovalType, ExecutionType, Policy } from "../models/Policy";
 import BaseTideRequest from "../models/TideRequest";
 import { StringFromUint8Array } from "../utils/Serialization";

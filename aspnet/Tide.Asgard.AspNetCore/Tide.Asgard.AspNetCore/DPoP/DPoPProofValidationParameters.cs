@@ -1,9 +1,13 @@
+// Copyright (c) Okta, Inc. and/or its affiliates. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
+// Modifications Copyright (c) Tide Foundation Limited.
+
 using System.Security.Claims;
 
 namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
 
 /// <summary>
-///     Encapsulates all parameters required for validating a DPoP proof token in the Auth0 ASP.NET Core API Authentication
+///     Encapsulates all parameters required for validating a DPoP proof token in the Asgard ASP.NET Core API Authentication
 ///     Library.
 /// </summary>
 /// <remarks>

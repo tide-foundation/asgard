@@ -1,3 +1,6 @@
+// Copyright (c) Tide Foundation Limited. All rights reserved.
+// Licensed under the Tide Community Open Code License. See LICENSE in the project root.
+
 // Tide Memory Object helper functions from tide-js
 export class TideMemory extends Uint8Array{
     static CreateFromArray(datas: Uint8Array[]): TideMemory   {

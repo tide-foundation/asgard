@@ -1,10 +1,14 @@
+// Copyright (c) Okta, Inc. and/or its affiliates. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
+// Modifications Copyright (c) Tide Foundation Limited.
+
 using System.Runtime.CompilerServices;
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.DependencyInjection;
 using Tide.Asgard.AspNetCore.Authentication.DPoP.EventHandlers;
 
-[assembly: InternalsVisibleTo("Auth0.AspNetCore.Authentication.Api.UnitTests")]
+[assembly: InternalsVisibleTo("Tide.Asgard.AspNetCore.Authentication.UnitTests")]
 [assembly: InternalsVisibleTo("DynamicProxyGenAssembly2")]
 
 namespace Tide.Asgard.AspNetCore.Authentication.DPoP;

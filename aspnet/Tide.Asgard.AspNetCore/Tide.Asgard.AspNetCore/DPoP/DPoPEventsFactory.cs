@@ -1,3 +1,7 @@
+// Copyright (c) Okta, Inc. and/or its affiliates. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
+// Modifications Copyright (c) Tide Foundation Limited.
+
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 
 namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
@@ -11,7 +15,7 @@ internal abstract class DPoPEventsFactory
     ///     Creates a new instance of <see cref="JwtBearerEvents" /> and assigns event handlers
     ///     based on the provided <paramref name="options" />.
     /// </summary>
-    /// <param name="options">The Auth0 API options containing custom event handlers.</param>
+    /// <param name="options">The API options containing custom event handlers.</param>
     /// <returns>A configured <see cref="JwtBearerEvents" /> instance with integrated event handlers.</returns>
     /// <exception cref="ArgumentNullException">
     ///     Thrown if either <paramref name="options" /> is null.

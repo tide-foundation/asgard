@@ -1,7 +1,11 @@
+// Copyright (c) Okta, Inc. and/or its affiliates. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
+// Modifications Copyright (c) Tide Foundation Limited.
+
 namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
 
 /// <summary>
-///     Provides a container for Auth0-specific constant values that are used throughout the SDK.
+///     Provides a container for constant values that are used throughout the SDK.
 /// </summary>
 public static class Constants
 {

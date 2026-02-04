@@ -1,3 +1,7 @@
+// Copyright (c) Okta, Inc. and/or its affiliates. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
+// Modifications Copyright (c) Tide Foundation Limited.
+
 using System.Runtime.CompilerServices;
 
 using Microsoft.AspNetCore.Authentication;
@@ -74,7 +78,7 @@ public static class AuthenticationBuilderExtensions
 
 	/// <summary>
 	///     Enables DPoP (Demonstration of Proof-of-Possession) support
-	///     using the default Auth0 authentication scheme.
+	///     using the default authentication scheme.
 	/// </summary>
 	/// <param name="builder">
 	///     The <see cref="AsgardAuthenticationBuilder" /> instance to configure.
@@ -93,7 +97,7 @@ public static class AuthenticationBuilderExtensions
     }
 
 	/// <summary>
-	///     Enables DPoP (Demonstration of Proof-of-Possession) support for the Auth0 API authentication builder
+	///     Enables DPoP (Demonstration of Proof-of-Possession) support for the Asgard API authentication builder
 	///     using a specified authentication scheme.
 	/// </summary>
 	/// <param name="builder">

@@ -1,3 +1,7 @@
+// Copyright (c) Okta, Inc. and/or its affiliates. All rights reserved.
+// Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
+// Modifications Copyright (c) Tide Foundation Limited.
+
 using Microsoft.IdentityModel.Tokens;
 
 namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
