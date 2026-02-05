@@ -1,4 +1,3 @@
-using Auth0.AspNetCore.Authentication.Api;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Tide.Asgard.AspNetCore.Authentication;
 using Tide.Asgard.AspNetCore.Authentication.DPoP;
