@@ -1,4 +1,6 @@
-﻿using Microsoft.IdentityModel.Logging;
+﻿using System.Security.Cryptography;
+using System.Text;
+using Microsoft.IdentityModel.Logging;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Tide.Asgard.Core.Crypto.Ed25519;
@@ -27,6 +29,19 @@ public static class ExtendedJsonWebKeyConverter
 			return edDsaSecurityKey;
 		}
 		return webKey;
+	}
+	public static byte[] ComputeJwkThumbprint(JsonWebKey webKey)
+	{
+		ArgumentNullException.ThrowIfNull(webKey);
+
+		if (webKey.Kty == ExtendedSecurityAlgorithms.KeyTypes.Ecdh)
+		{
+			// RFC 7638 § 3.2 + RFC 8037 § 2: required members for OKP in lexicographic order
+			var json = $"{{\"crv\":\"{webKey.Crv}\",\"kty\":\"{webKey.Kty}\",\"x\":\"{webKey.X}\"}}";
+			return SHA256.HashData(Encoding.UTF8.GetBytes(json));
+		}
+
+		return webKey.ComputeJwkThumbprint();
 	}
 
 	public static bool TryConvertToEdDsaSecurityKey(JsonWebKey webKey, out EdDsaSecurityKey key)

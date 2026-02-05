@@ -113,7 +113,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
         }
 
         validationResult.JsonWebKey = jwkJson;
-        validationResult.JsonWebKeyThumbprint = WebEncoders.Base64UrlEncode(jwk!.ComputeJwkThumbprint());
+        validationResult.JsonWebKeyThumbprint = WebEncoders.Base64UrlEncode(ExtendedJsonWebKeyConverter.ComputeJwkThumbprint(jwk!));
 
         await ValidateTokenSignature(validationParameters, validationResult);
     }
