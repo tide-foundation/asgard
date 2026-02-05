@@ -1,13 +1,12 @@
 This product includes code derived from:
 
-  Auth0 ASP.NET Core Authentication API
-  https://github.com/auth0/aspnetcore-api
-  Copyright 2025 Okta, Inc.
+  ScottBrady.IdentityModel
+  https://github.com/scottbrady91/IdentityModel
+  Copyright Scott Brady
   Licensed under the Apache License, Version 2.0
 
-  Modifications: Renamed namespaces from Auth0 to Tide.Asgard,
-  added DPoP (Demonstration of Proof-of-Possession) support,
-  and other adaptations for the Tide Asgard platform.
+  Modifications: Renamed namespaces from ScottBrady.IdentityModel to
+  Tide.Asgard.Core, and other adaptations for the Tide Asgard platform.
   Modifications by Tide Foundation Limited are subject to both the
   Apache 2.0 license (for the derived portions) and the Tide Community
   Open Code License (for new additions). See the root LICENSE file.
