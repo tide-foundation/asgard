@@ -3,6 +3,7 @@
 // Modifications Copyright (c) Tide Foundation Limited.
 
 using Microsoft.IdentityModel.Tokens;
+using Tide.Asgard.Core.Crypto.Ed25519;
 
 namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
 
@@ -46,9 +47,6 @@ public class DPoPOptions
     ///         <item>
     ///             <description>ValidTypes: Only allows DPoP JWT type.</description>
     ///         </item>
-    ///         <item>
-    ///             <description>ValidAlgorithms: Only allows ECDSA SHA-256.</description>
-    ///         </item>
     ///     </list>
     /// </summary>
     internal TokenValidationParameters TokenValidationParameters { get; } = new()
@@ -63,6 +61,6 @@ public class DPoPOptions
         ValidateIssuerSigningKey = false,
         LogValidationExceptions = false,
         ValidTypes = [Constants.DPoP.JwtTyp],
-        ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256]
+        ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512, ExtendedSecurityAlgorithms.EdDsa]
     };
 }

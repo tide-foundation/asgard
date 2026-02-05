@@ -10,6 +10,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
+using Tide.Asgard.Core.Crypto.Ed25519;
 
 namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
 
@@ -278,7 +279,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
         try
         {
             TokenValidationParameters? tvp = validationParameters.Options.TokenValidationParameters.Clone();
-            tvp.IssuerSigningKey = new JsonWebKey(validationResult.JsonWebKey);
+			tvp.IssuerSigningKey = new JsonWebKey(validationResult.JsonWebKey).ToSecurityKey();
 
             TokenValidationResult? tokenValidationResult =
                 await TokenHandler.ValidateTokenAsync(validationParameters.ProofToken, tvp);
