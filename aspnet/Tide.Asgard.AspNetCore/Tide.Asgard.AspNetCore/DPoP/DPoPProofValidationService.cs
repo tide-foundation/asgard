@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Tide.Asgard.Core.Crypto.Ed25519;
@@ -20,6 +21,13 @@ namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
 /// </summary>
 public class DPoPProofValidationService : IDPoPProofValidationService
 {
+    private readonly ILogger<DPoPProofValidationService> _logger;
+
+    public DPoPProofValidationService(ILogger<DPoPProofValidationService> logger)
+    {
+        _logger = logger;
+    }
+
     /// <summary>
     ///     Handler for processing and validating JWT tokens.
     /// </summary>
@@ -82,6 +90,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
     {
         if (!TryParseProofToken(validationParameters.ProofToken, out JsonWebToken? token))
         {
+            _logger.LogWarning("DPoP proof validation failed: unable to parse proof token as a valid JWT");
             validationResult.SetError(
 				Constants.DPoP.Error.Code.InvalidDPoPProof,
 				Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -90,6 +99,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
 
         if (!TryExtractJsonWebKey(token, out var jwkJson))
         {
+            _logger.LogWarning("DPoP proof validation failed: unable to extract JWK from proof token header");
             validationResult.SetError(
 				Constants.DPoP.Error.Code.InvalidDPoPProof,
 				Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -98,6 +108,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
 
         if (!TryCreateJsonWebKey(jwkJson, out JsonWebKey? jwk))
         {
+            _logger.LogWarning("DPoP proof validation failed: unable to create JsonWebKey from extracted JWK");
             validationResult.SetError(
                 Constants.DPoP.Error.Code.InvalidDPoPProof,
                 Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -106,6 +117,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
 
         if (jwk is { HasPrivateKey: true })
         {
+            _logger.LogWarning("DPoP proof validation failed: JWK in proof token header contains a private key");
             validationResult.SetError(
                 Constants.DPoP.Error.Code.InvalidDPoPProof,
                 Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -162,6 +174,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
     {
         if (validationResult.ProofClaims == null)
         {
+            _logger.LogWarning("DPoP proof validation failed: proof claims are null (signature validation may have failed)");
             validationResult.SetError(
                 Constants.DPoP.Error.Code.InvalidDPoPProof,
                 Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -170,6 +183,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
 
         if (!ValidateAccessTokenHash(validationParameters.AccessToken, validationResult))
         {
+            _logger.LogWarning("DPoP proof validation failed: 'ath' (access token hash) claim does not match the access token");
             validationResult.SetError(
                 Constants.DPoP.Error.Code.InvalidDPoPProof,
                 Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -178,6 +192,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
 
         if (!ValidateJtiClaim(validationResult.ProofClaims))
         {
+            _logger.LogWarning("DPoP proof validation failed: 'jti' claim is missing or empty");
             validationResult.SetError(
                 Constants.DPoP.Error.Code.InvalidDPoPProof,
                 Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -186,6 +201,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
 
         if (!ValidateHtmClaim(validationParameters.Htm, validationResult.ProofClaims))
         {
+            _logger.LogWarning("DPoP proof validation failed: 'htm' claim does not match request method. Expected: {ExpectedHtm}", validationParameters.Htm);
             validationResult.SetError(
                 Constants.DPoP.Error.Code.InvalidDPoPProof,
                 Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -194,6 +210,8 @@ public class DPoPProofValidationService : IDPoPProofValidationService
 
         if (!ValidateHtuClaim(validationParameters.Htu, validationResult.ProofClaims))
         {
+            validationResult.ProofClaims.TryGetValue(Constants.DPoP.Htu, out var htuClaim);
+            _logger.LogWarning("DPoP proof validation failed: 'htu' claim does not match request URI. Expected: {ExpectedHtu}, Actual: {ActualHtu}", validationParameters.Htu, htuClaim);
             validationResult.SetError(
                 Constants.DPoP.Error.Code.InvalidDPoPProof,
                 Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -202,6 +220,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
 
         if (!ValidateIatClaim(validationParameters, validationResult))
         {
+            _logger.LogWarning("DPoP proof validation failed: 'iat' claim is outside the allowed time window (offset: {IatOffset}s, leeway: {Leeway}s)", validationParameters.Options.IatOffset, validationParameters.Options.Leeway);
             validationResult.SetError(
                 Constants.DPoP.Error.Code.InvalidDPoPProof,
                 Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -286,6 +305,7 @@ public class DPoPProofValidationService : IDPoPProofValidationService
 
             if (tokenValidationResult?.Exception != null)
             {
+                _logger.LogWarning("DPoP proof validation failed: proof token signature validation returned an error");
                 validationResult.SetError(
                     Constants.DPoP.Error.Code.InvalidDPoPProof,
                     Constants.DPoP.Error.Description.DPoPProofValidationFailure);
@@ -297,8 +317,9 @@ public class DPoPProofValidationService : IDPoPProofValidationService
                 validationResult.ProofClaims = tokenValidationResult.Claims;
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogWarning(ex, "DPoP proof validation failed: exception during proof token signature validation");
             validationResult.SetError(
                 Constants.DPoP.Error.Code.InvalidDPoPProof,
                 Constants.DPoP.Error.Description.DPoPProofValidationFailure);
