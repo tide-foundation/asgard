@@ -6,13 +6,9 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 	[ApiController]
 	public class DPoPAuthController : ControllerBase
 	{
-		[HttpGet("tide_dpop/iss/{issHex}/aud/{audHex}/tide_dpop_auth.html")]
-		public IActionResult Get(string issHex, string audHex)
+		[HttpGet("tide_dpop/iss/687474703a2f2f6c6f63616c686f73743a383038302f7265616c6d732f65373536666432312d613035352d343130392d626135642d616661353336393631616337/aud/6d79636c69656e74/tide_dpop_auth.html")]
+		public IActionResult Get()
 		{
-			var issuer = System.Text.Encoding.UTF8.GetString(Convert.FromHexString(issHex));
-			var audience = System.Text.Encoding.UTF8.GetString(Convert.FromHexString(audHex));
-			if(issuer != "http://localhost:8080/realms/e756fd21-a055-4109-ba5d-afa536961ac7") throw new Exception();
-			if(audience != "myclient") throw new Exception();
 			Response.Headers.Remove("X-Frame-Options");
 			Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'unsafe-inline'";
 			Response.Headers["Allow-CSP-From"] = "*";
