@@ -10,4 +10,8 @@
     <ProjectReference Include="..\Tide.Asgard.AspNetCore\Tide.Asgard.AspNetCore.Authentication.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\tide_dpop_auth.html" />
+  </ItemGroup>
+
 </Project>

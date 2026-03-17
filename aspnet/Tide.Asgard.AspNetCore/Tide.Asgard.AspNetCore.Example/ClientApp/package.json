@@ -7,7 +7,7 @@
     "build": "vite build"
   },
   "dependencies": {
-    "keycloak-js": "tide-foundation/keycloak-js#dpop-support"
+    "@tidecloak/js": "~/tidecloak-js/packages/tidecloak-js"
   },
   "devDependencies": {
     "vite": "^6.0.0"

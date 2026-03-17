@@ -1,5 +1,4 @@
-import Keycloak from "keycloak-js";
-import keycloakConfig from "../keycloak.json";
+import { TideCloak as Tidecloak } from "@tidecloak/js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -72,7 +71,7 @@ async function callHelloEndpoint(kc) {
 }
 
 async function init() {
-  const kc = new Keycloak(keycloakConfig);
+  const kc = new Tidecloak("keycloak.json");
 
   btnLogin.addEventListener("click", () => kc.login());
   btnLogout.addEventListener("click", () => kc.logout());
@@ -94,7 +93,7 @@ async function init() {
     const authenticated = await kc.init({
       onLoad: "login-required",
       checkLoginIframe: false,
-      useDPoP: { mode: "strict" },
+      useDPoP: { mode: "strict", alg: "EdDSA" },
     });
 
     if (authenticated) {

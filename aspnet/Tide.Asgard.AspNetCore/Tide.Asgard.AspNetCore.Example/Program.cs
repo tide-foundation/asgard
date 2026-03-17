@@ -1,12 +1,23 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 using Tide.Asgard.AspNetCore.Authentication;
 using Tide.Asgard.AspNetCore.Authentication.DPoP;
+using Tide.Asgard.Core.Crypto.Ed25519;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 
 var keycloak = builder.Configuration.GetSection("Keycloak");
+
+var signingKeySection = keycloak.GetSection("SigningKey");
+var jwk = new JsonWebKey
+{
+    Kty = signingKeySection["kty"],
+    Crv = signingKeySection["crv"],
+    X = signingKeySection["x"]
+};
+var signingKey = jwk.ToSecurityKey();
 
 builder.Services
     .AddAsgardAuthentication(options =>
@@ -15,6 +26,7 @@ builder.Services
         options.Authority = keycloak["Authority"];
         options.Audience = keycloak["Audience"];
         options.RequireHttpsMetadata = false; // dev only - set true in production
+        options.TokenValidationParameters.IssuerSigningKey = signingKey;
     })
     .WithDPoP(op =>
     {
