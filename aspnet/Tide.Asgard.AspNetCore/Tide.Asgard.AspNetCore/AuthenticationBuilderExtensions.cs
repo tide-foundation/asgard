@@ -2,15 +2,18 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
 // Modifications Copyright (c) Tide Foundation Limited.
 
-using System.Runtime.CompilerServices;
-
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using System.Net.Security;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography.X509Certificates;
 using Tide.Asgard.AspNetCore.Authentication.DPoP;
 using Tide.Asgard.AspNetCore.Authentication.DPoP.EventHandlers;
+using Tide.Asgard.AspNetCore.Authentication.mTLS;
+using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 
 namespace Tide.Asgard.AspNetCore.Authentication;
 
@@ -94,7 +97,7 @@ public static class AuthenticationBuilderExtensions
         Action<DPoPOptions> configureDPoPOptions)
     {
         return builder.WithDPoP(JwtBearerDefaults.AuthenticationScheme, configureDPoPOptions);
-    }
+	}
 
 	/// <summary>
 	///     Enables DPoP (Demonstration of Proof-of-Possession) support for the Asgard API authentication builder
@@ -120,22 +123,89 @@ public static class AuthenticationBuilderExtensions
 	///     Thrown when <paramref name="authenticationScheme" /> is empty or null.
 	/// </exception>
 	public static AsgardAuthenticationBuilder WithDPoP(
-        this AsgardAuthenticationBuilder builder,
-        string authenticationScheme,
-        Action<DPoPOptions> configureDPoPOptions)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrWhiteSpace(authenticationScheme);
-        ArgumentNullException.ThrowIfNull(configureDPoPOptions);
+		this AsgardAuthenticationBuilder builder,
+		string authenticationScheme,
+		Action<DPoPOptions> configureDPoPOptions)
+	{
+		ArgumentNullException.ThrowIfNull(builder);
+		ArgumentException.ThrowIfNullOrWhiteSpace(authenticationScheme);
+		ArgumentNullException.ThrowIfNull(configureDPoPOptions);
 
-        var dPoPOptions = new DPoPOptions();
-        configureDPoPOptions(dPoPOptions);
+		var dPoPOptions = new DPoPOptions();
+		configureDPoPOptions(dPoPOptions);
 
-        builder.Services.TryAddSingleton(dPoPOptions);
-        builder.Services.TryAddScoped<IDPoPProofValidationService, DPoPProofValidationService>();
-        builder.Services.TryAddScoped<MessageReceivedHandler>();
-        builder.Services.TryAddScoped<TokenValidationHandler>();
-        builder.Services.TryAddScoped<ChallengeHandler>();
-        return builder;
-    }
+		builder.Services.TryAddSingleton(dPoPOptions);
+		builder.Services.TryAddScoped<IDPoPProofValidationService, DPoPProofValidationService>();
+		builder.Services.TryAddScoped<MessageReceivedHandler>();
+		builder.Services.TryAddScoped<TokenValidationHandler>();
+		builder.Services.TryAddScoped<ChallengeHandler>();
+		return builder;
+	}
+
+	/// <summary>
+	/// Enables Mutual TLS (mTLS) to communicate with the authorization server. This is required for using other services such as DelegatedTokenExchange.
+	/// </summary>
+	/// <param name="builder"></param>
+	/// <param name="configureMutualTLS"></param>
+	/// <returns></returns>
+	public static AsgardAuthenticationBuilder WithMutualTLS(
+		this AsgardAuthenticationBuilder builder,
+		Action<MTLSOptions> configureMutualTLS
+		)
+	{
+		ArgumentNullException.ThrowIfNull(builder);
+		ArgumentNullException.ThrowIfNull(configureMutualTLS);
+
+		var mtlsOptions = new MTLSOptions();
+		configureMutualTLS(mtlsOptions);
+
+		ArgumentNullException.ThrowIfNull(mtlsOptions.BaseUri);
+		ArgumentNullException.ThrowIfNull(mtlsOptions.X509Certificate2);
+		ArgumentException.ThrowIfNullOrEmpty(mtlsOptions.Name);
+
+		builder.Services.AddHttpClient(mtlsOptions.Name, client =>
+		{
+			client.BaseAddress = mtlsOptions.BaseUri;
+		})
+		.ConfigurePrimaryHttpMessageHandler(() =>
+		{
+			return new SocketsHttpHandler
+			{
+				SslOptions = new SslClientAuthenticationOptions
+				{
+					ClientCertificates = [mtlsOptions.X509Certificate2]
+				}
+			};
+		});
+
+		return builder;
+	}
+
+	/// <summary>
+	/// Enables OAuth 2.0 Token Exchange in your application. Use the injected <see cref="TokenExchangeService" /> in your controllers to perform exchanges.
+	/// </summary>
+	/// <param name="builder"></param>
+	/// <returns></returns>
+	/// <exception cref="InvalidOperationException"></exception>
+	public static AsgardAuthenticationBuilder WithTokenExchange(
+		this AsgardAuthenticationBuilder builder,
+		Action<TokenExchangeMTLSOptions> configureExchangeMutualTLS
+		)
+	{
+		ArgumentNullException.ThrowIfNull(builder);
+
+		var authzMtlsOptions = new TokenExchangeMTLSOptions();
+		configureExchangeMutualTLS(authzMtlsOptions);
+
+		builder.WithMutualTLS(mtls =>
+		{
+			mtls.Name = authzMtlsOptions.Name;
+			mtls.X509Certificate2 = authzMtlsOptions.X509Certificate2;
+			mtls.BaseUri = authzMtlsOptions.BaseUri;
+		});
+
+		builder.Services.AddScoped<TokenExchangeService>();
+
+		return builder;
+	}
 }

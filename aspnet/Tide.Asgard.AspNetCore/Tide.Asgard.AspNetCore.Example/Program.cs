@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Cryptography.X509Certificates;
 using Tide.Asgard.AspNetCore.Authentication;
 using Tide.Asgard.AspNetCore.Authentication.DPoP;
 using Tide.Asgard.Core.Crypto.Ed25519;
@@ -31,6 +32,17 @@ builder.Services
     .WithDPoP(op =>
     {
         op.Mode = DPoPModes.Required;
+    })
+    // Use the below to set up tidecloak token exchange
+    .WithTokenExchange(tcMtls =>
+    {
+        tcMtls.X509Certificate2 = new X509Certificate2();
+        tcMtls.BaseUri = new Uri("");
+    })
+    // Use the below to set up communication with ANOTHER server (who knows who) which you have MTLs set up with
+    .WithMutualTLS(mtls =>
+    {
+
     });
 
 var app = builder.Build();
