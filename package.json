@@ -9,11 +9,16 @@
     ".": {
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js"
+    },
+    "./node": {
+      "import": "./dist/esm/node/index.js",
+      "require": "./dist/cjs/node/index.js",
+      "types": "./dist/esm/node/index.d.ts"
     }
   },
   "scripts": {
-    "build:cjs": "tsc -p tsconfig.cjs.json",
-    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json && tsc -p node/tsconfig.cjs.json",
+    "build:esm": "tsc -p tsconfig.esm.json && tsc -p node/tsconfig.esm.json",
     "build": "npm run build:cjs && npm run build:esm",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build"
