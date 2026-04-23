@@ -276,6 +276,14 @@ public static class AuthenticationBuilderExtensions
 
 		builder.AuthBuilder.Services.AddControllers().AddApplicationPart(System.Reflection.Assembly.GetExecutingAssembly());
 
+		builder.AuthBuilder.Services
+			.AddAuthentication()
+			.AddJwtBearer(AsgardAuthenticationSchemes.ClientCertificationAuthority, o =>
+			{
+				o.Authority = builder.AuthBuilder.Authority;
+				o.Audience = AsgardInitPageClient.ClientId;
+			});
+
 		var regoOptions = new ClientCertificationOptions
 		{
 			CredentialPath = credentialStorePath,

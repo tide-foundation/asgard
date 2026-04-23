@@ -15,36 +15,126 @@
 		.status.error { background: #dc2626; }
 		.muted { color: #6b7280; font-size: 0.875rem; margin-top: 1rem; }
 		code { background: #f3f4f6; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; }
+		button { font: inherit; padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #d1d5db; background: #111827; color: #fff; cursor: pointer; }
+		button:hover { background: #1f2937; }
+		button.secondary { background: #fff; color: #111827; }
+		.row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+		[hidden] { display: none !important; }
 	</style>
 </head>
 <body>
 	<h1>Asgard Client Registration</h1>
 
-	<div class="card">
-		<div class="label">Status</div>
-		<span id="status" class="status">Loading…</span>
+	<div id="loading-view" class="card">
+		<span class="muted">Initializing…</span>
 	</div>
 
-	<div class="card">
-		<div class="label">Client ID</div>
-		<div id="clientId" class="value">—</div>
+	<div id="login-view" hidden>
+		<div class="card">
+			<p>Log in to view the client registration status.</p>
+			<button id="loginBtn">Log in</button>
+		</div>
 	</div>
 
-	<div class="card">
-		<div class="label">Client Type</div>
-		<div id="clientType" class="value">—</div>
+	<div id="status-view" hidden>
+		<div class="card">
+			<div class="row">
+				<div>
+					<div class="label">Signed in as</div>
+					<div id="userName" class="value">—</div>
+				</div>
+				<button id="logoutBtn" class="secondary">Log out</button>
+			</div>
+		</div>
+
+		<div class="card">
+			<div class="label">Status</div>
+			<span id="status" class="status">Loading…</span>
+		</div>
+
+		<div class="card">
+			<div class="label">Client ID</div>
+			<div id="clientId" class="value">—</div>
+		</div>
+
+		<div class="card">
+			<div class="label">Client Type</div>
+			<div id="clientType" class="value">—</div>
+		</div>
+
+		<div id="register-card" class="card" hidden>
+			<p>This client is not yet registered with the authorization server.</p>
+			<button id="registerBtn">Register</button>
+		</div>
+
+		<p class="muted">
+			Registration is driven by the authorization server. It calls
+			<code>POST /AsgardClientCertification/generate</code> to obtain a CSR, then
+			<code>POST /AsgardClientCertification/cerify</code> with the signed certificate.
+		</p>
 	</div>
 
-	<p class="muted">
-		Registration is driven by the authorization server. It calls
-		<code>POST /AsgardClientCertification/generate</code> to obtain a CSR, then
-		<code>POST /AsgardClientCertification/cerify</code> with the signed certificate.
-	</p>
+	<script type="module">
+		// Use the underlying TideCloak client directly. IAMService.initIAM hardcodes
+		// onLoad: "check-sso" + silentCheckSsoRedirectUri, which we don't want —
+		// init({}) without onLoad skips the silent SSO iframe and login redirect.
+		import { TideCloak } from 'https://esm.sh/@tidecloak/js@0.13.27';
 
-	<script>
+		const loadingView = document.getElementById('loading-view');
+		const loginView = document.getElementById('login-view');
+		const statusView = document.getElementById('status-view');
+
+		const adapter = await fetch('/keycloak.json').then(r => r.json());
+		const redirectUri = window.location.origin + '/asgard/index.html';
+
+		const tc = new TideCloak({
+			url: adapter['auth-server-url'],
+			realm: adapter.realm,
+			clientId: 'asgard-init-page'
+		});
+
+		let pollId;
+
+		try {
+			await tc.init({
+				pkceMethod: 'S256',
+				checkLoginIframe: false
+			});
+		} catch (err) {
+			console.error('Tidecloak init error', err);
+		}
+
+		render(tc.authenticated === true);
+
+		document.getElementById('loginBtn').onclick = () => tc.login({ redirectUri });
+		document.getElementById('logoutBtn').onclick = () => tc.logout({ redirectUri });
+		document.getElementById('registerBtn').onclick = () => register();
+
+		function register() {
+			console.log('hello');
+		}
+
+		function render(loggedIn) {
+			loadingView.hidden = true;
+			loginView.hidden = loggedIn;
+			statusView.hidden = !loggedIn;
+			if (loggedIn) {
+				document.getElementById('userName').textContent =
+					tc.tokenParsed?.preferred_username ?? tc.tokenParsed?.sub ?? '—';
+				refresh();
+				pollId ??= setInterval(refresh, 3000);
+			} else if (pollId) {
+				clearInterval(pollId);
+				pollId = null;
+			}
+		}
+
 		async function refresh() {
 			try {
-				const r = await fetch('/AsgardClientCertification/ready-status');
+				await tc.updateToken(30).catch(() => {});
+				const r = await fetch('/AsgardClientCertification/ready-status', {
+					headers: { Authorization: `Bearer ${tc.token}` }
+				});
 				if (!r.ok) throw new Error(r.statusText);
 				const d = await r.json();
 				const s = document.getElementById('status');
@@ -52,12 +142,11 @@
 				s.className = 'status ' + d.status.toLowerCase();
 				document.getElementById('clientId').textContent = d.clientId;
 				document.getElementById('clientType').textContent = d.clientType;
+				document.getElementById('register-card').hidden = d.status !== 'Unregistered';
 			} catch (e) {
 				document.getElementById('status').textContent = 'unreachable';
 			}
 		}
-		refresh();
-		setInterval(refresh, 3000);
 	</script>
 </body>
 </html>

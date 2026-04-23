@@ -7,14 +7,17 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.Tasks;
+using Tide.Asgard.AspNetCore.Authentication;
 
 namespace Tide.Asgard.AspNetCore.Authentication.ClientCertification.Controllers
 {
 	[ApiController]
 	[Route("[controller]")]
+	[Authorize(
+		AuthenticationSchemes = AsgardAuthenticationSchemes.ClientCertificationAuthority,
+		Roles = AsgardInitPageClient.SubmitCertificateRequestRole)]
 	public class AsgardClientCertificationController(ClientCertificationOptions options) : ControllerBase
 	{
-		[AllowAnonymous]
 		[HttpGet("ready-status")]
 		public IActionResult ReadyStatus()
 		{

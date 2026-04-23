@@ -88,9 +88,7 @@ namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange
 		/// <returns></returns>
 		private async Task<string> ExchangeDPoPToken(IHeaderDictionary headers, string requestedAudience)
 		{
-			throw new NotImplementedException();
-
-
+throw new NotImplementedException();	
 			// Ensure DPOP Authentication is enabled first - someting must first approve this dpop token
 
 

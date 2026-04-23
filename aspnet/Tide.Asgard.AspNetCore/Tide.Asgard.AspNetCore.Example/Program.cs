@@ -39,7 +39,7 @@ builder.Services
     })
     .SetupConfidentialClient("asgard_client", mtls =>
     {
-        mtls.X509Certificate2 = new X509Certificate2("client.pfx");   //  <- testing auto reg
+        mtls.X509Certificate2 = null ;//new X509Certificate2("client.pfx");   //  <- testing auto reg
         mtls.BaseUri = new Uri("https://localhost:8443/realms/aaa/");
 	})
 	// Use the below to set up tidecloak token exchange
