@@ -21,12 +21,31 @@ public class AsgardAuthenticationBuilder
     /// <param name="authenticationScheme">
     ///     The authentication scheme to use for the Asgard authentication handler.
     /// </param>
-    public AsgardAuthenticationBuilder(IServiceCollection services, string authenticationScheme)
+    public AsgardAuthenticationBuilder(IServiceCollection services, string authenticationScheme, string authority, string authorizationServerHost)
     {
         Services = services;
         AuthenticationScheme = authenticationScheme;
+        Authority = authority;
+        AuthorizationServerHost = authorizationServerHost;
     }
 
     public string AuthenticationScheme { get; }
     public IServiceCollection Services { get; }
+    public string Authority { get; }
+    public string AuthorizationServerHost { get; }
+}
+
+public class AsgardConfidentialClientBuilder(string clientId, AsgardAuthenticationBuilder authBuilder, ConfidentialClientType type, bool clientCertSet, Uri baseUri)
+{
+    public string ClientId { get; } = clientId;
+    public AsgardAuthenticationBuilder AuthBuilder { get; } = authBuilder;
+    public ConfidentialClientType ClientType { get; } = type;
+    public bool ClientCertSet { get; } = clientCertSet;
+    public Uri BaseUri { get; } = baseUri;
+}
+
+public enum ConfidentialClientType
+{
+    MTLS,
+    ClientSecret
 }

@@ -14,4 +14,10 @@
     <EmbeddedResource Include="Resources\tide_dpop_auth.html" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="client.pfx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

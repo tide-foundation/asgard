@@ -19,18 +19,12 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 		}
 
 		[HttpGet]
-		public IActionResult Get()
+		public async Task<IActionResult> Get()
 		{
 			_logger.LogInformation("Hello Requested");
-			return Ok("Hello!");
-		}
+			var token = await _tokenExchangeService.ExchangeToken(HttpContext.Request.Headers, "account");
 
-		[HttpGet]
-		public async Task<IActionResult> Ping()
-		{
-			var token = await _tokenExchangeService.ExchangeToken(HttpContext.Request.Headers);
-			return Ok("Ping!");
-
+			return Ok(token);
 		}
 	}
 }

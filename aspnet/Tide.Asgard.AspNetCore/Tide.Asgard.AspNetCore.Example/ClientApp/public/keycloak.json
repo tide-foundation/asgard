@@ -1,8 +1,8 @@
 {
-  "realm": "eb9d7b94-2e78-46cd-b4ec-fd41dbe66f6c",
+  "realm": "aaa",
   "auth-server-url": "http://localhost:8080",
   "ssl-required": "external",
-  "resource": "myclient",
+  "resource": "spa_client",
   "public-client": true,
   "confidential-port": 0,
   "jwk": {

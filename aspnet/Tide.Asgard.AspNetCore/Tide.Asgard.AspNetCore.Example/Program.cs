@@ -20,6 +20,14 @@ var jwk = new JsonWebKey
 };
 var signingKey = jwk.ToSecurityKey();
 
+// Dev only: allow the authz-server callback scheme to fetch metadata over HTTP
+// (Keycloak is on http://localhost:8080 in this example).
+// Must be registered BEFORE AddJwtBearer runs inside the SDK chain so this
+// PostConfigure fires before the framework's HTTPS validator.
+builder.Services.PostConfigure<JwtBearerOptions>(
+	AsgardAuthenticationSchemes.ClientCertificationAuthority,
+	o => o.RequireHttpsMetadata = false);
+
 builder.Services
     .AddAsgardAuthentication(options =>
     {
@@ -27,23 +35,17 @@ builder.Services
         options.Authority = keycloak["Authority"];
         options.Audience = keycloak["Audience"];
         options.RequireHttpsMetadata = false; // dev only - set true in production
-        options.TokenValidationParameters.IssuerSigningKey = signingKey;
+       // options.TokenValidationParameters.IssuerSigningKey = signingKey;
     })
-    .WithDPoP(op =>
+    .SetupConfidentialClient("asgard_client", mtls =>
     {
-        op.Mode = DPoPModes.Required;
-    })
-    // Use the below to set up tidecloak token exchange
-    .WithTokenExchange(tcMtls =>
-    {
-        tcMtls.X509Certificate2 = new X509Certificate2();
-        tcMtls.BaseUri = new Uri("");
-    })
-    // Use the below to set up communication with ANOTHER server (who knows who) which you have MTLs set up with
-    .WithMutualTLS(mtls =>
-    {
-
-    });
+        mtls.X509Certificate2 = new X509Certificate2("client.pfx");   //  <- testing auto reg
+        mtls.BaseUri = new Uri("https://localhost:8443/realms/aaa/");
+	})
+	// Use the below to set up tidecloak token exchange
+	.WithTokenExchange("audience")
+    .WithAutoClientCertification("/home/sam/creds")
+	;
 
 var app = builder.Build();
 
