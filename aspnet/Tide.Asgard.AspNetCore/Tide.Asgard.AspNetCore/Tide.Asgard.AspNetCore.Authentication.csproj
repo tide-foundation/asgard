@@ -18,4 +18,8 @@
     <ProjectReference Include="..\Tide.Asgard.Core\Tide.Asgard.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="ClientCeritifcation\Views\index.html" />
+  </ItemGroup>
+
 </Project>

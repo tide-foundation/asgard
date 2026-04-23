@@ -52,6 +52,8 @@ var app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+app.UseAsgardDashboard(); // asgard!
+
 app.UseAuthentication();
 app.UseAuthorization();
 

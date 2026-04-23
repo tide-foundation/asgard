@@ -257,14 +257,14 @@ public static class AuthenticationBuilderExtensions
 		if (builder.ClientType != ConfidentialClientType.MTLS)
 			throw new InvalidOperationException($"Cannot perform auto client certification if client type is not {ConfidentialClientType.MTLS}. Remove {nameof(WithAutoClientCertification)} from ASP.NET build");
 
-		// Need to determine if this client is already registered - check the credentials folder for certifications
-
-		if(builder.ClientCertSet) return builder; // skip certification is dev specifically provided a cert previously
-
 		var certFilePath = Path.Combine(credentialStorePath, ClientCertificationOptions.CredentialFileName);
 
 		RegistrationStatus regoStatus;
-		if (!File.Exists(certFilePath))
+		if (builder.ClientCertSet)
+		{
+			regoStatus = RegistrationStatus.Registered;
+		}
+		else if (!File.Exists(certFilePath))
 		{
 			regoStatus = RegistrationStatus.Unregistered;
 		}
@@ -276,17 +276,6 @@ public static class AuthenticationBuilderExtensions
 
 		builder.AuthBuilder.Services.AddControllers().AddApplicationPart(System.Reflection.Assembly.GetExecutingAssembly());
 
-		// Dedicated scheme for authz-server callbacks to the SDK registration controller.
-		// Validates tokens issued BY the authz server TO this client (aud = clientId),
-		// distinct from the user-facing access-token scheme (aud = API).
-		builder.AuthBuilder.Services.AddAuthentication().AddJwtBearer(
-			AsgardAuthenticationSchemes.ClientCertificationAuthority,
-			jwt =>
-			{
-				jwt.Authority = builder.AuthBuilder.Authority;
-				jwt.Audience = builder.ClientId;
-			});
-
 		var regoOptions = new ClientCertificationOptions
 		{
 			CredentialPath = credentialStorePath,
@@ -297,6 +286,8 @@ public static class AuthenticationBuilderExtensions
 		};
 
 		builder.AuthBuilder.Services.AddSingleton(regoOptions);
+
+		if (builder.ClientCertSet) return builder;
 
 		// Register the named HttpClient up-front. The primary handler factory loads the cert
 		// from disk on each handler refresh (~2 min default), so the client picks up the

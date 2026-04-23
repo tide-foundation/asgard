@@ -10,7 +10,6 @@ using System.Threading.Tasks;
 
 namespace Tide.Asgard.AspNetCore.Authentication.ClientCertification.Controllers
 {
-	[Authorize(AuthenticationSchemes = AsgardAuthenticationSchemes.ClientCertificationAuthority)]
 	[ApiController]
 	[Route("[controller]")]
 	public class AsgardClientCertificationController(ClientCertificationOptions options) : ControllerBase
@@ -26,6 +25,8 @@ namespace Tide.Asgard.AspNetCore.Authentication.ClientCertification.Controllers
 				Status = options.RegistrationStatus.ToString()
 			});
 		}
+
+
 
 		[HttpGet("generate")]
 		public IActionResult Generate()

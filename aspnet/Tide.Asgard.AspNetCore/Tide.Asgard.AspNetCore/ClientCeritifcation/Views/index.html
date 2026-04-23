@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<title>Asgard Client Registration</title>
+	<style>
+		body { font-family: system-ui, -apple-system, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #111827; }
+		h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+		.card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; background: #fff; }
+		.label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 0.25rem; }
+		.value { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.95rem; }
+		.status { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 9999px; color: white; font-weight: 600; font-size: 0.85rem; background: #6b7280; }
+		.status.registered { background: #16a34a; }
+		.status.certifying { background: #ca8a04; }
+		.status.error { background: #dc2626; }
+		.muted { color: #6b7280; font-size: 0.875rem; margin-top: 1rem; }
+		code { background: #f3f4f6; padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; }
+	</style>
+</head>
+<body>
+	<h1>Asgard Client Registration</h1>
+
+	<div class="card">
+		<div class="label">Status</div>
+		<span id="status" class="status">Loading…</span>
+	</div>
+
+	<div class="card">
+		<div class="label">Client ID</div>
+		<div id="clientId" class="value">—</div>
+	</div>
+
+	<div class="card">
+		<div class="label">Client Type</div>
+		<div id="clientType" class="value">—</div>
+	</div>
+
+	<p class="muted">
+		Registration is driven by the authorization server. It calls
+		<code>POST /AsgardClientCertification/generate</code> to obtain a CSR, then
+		<code>POST /AsgardClientCertification/cerify</code> with the signed certificate.
+	</p>
+
+	<script>
+		async function refresh() {
+			try {
+				const r = await fetch('/AsgardClientCertification/ready-status');
+				if (!r.ok) throw new Error(r.statusText);
+				const d = await r.json();
+				const s = document.getElementById('status');
+				s.textContent = d.status;
+				s.className = 'status ' + d.status.toLowerCase();
+				document.getElementById('clientId').textContent = d.clientId;
+				document.getElementById('clientType').textContent = d.clientType;
+			} catch (e) {
+				document.getElementById('status').textContent = 'unreachable';
+			}
+		}
+		refresh();
+		setInterval(refresh, 3000);
+	</script>
+</body>
+</html>
