@@ -118,8 +118,9 @@ export class TideDelegation {
    * On restart: loads existing key from file and configures mTLS.
    *
    * @param keyDir - Directory to store key and instance ID (default: same dir as adapter JSON, or ./data)
+   * @param accessToken - Optional bearer token forwarded to the TideCloak cert-request endpoint
    */
-  async init(keyDir?: string): Promise<void> {
+  async init(keyDir?: string, accessToken?: string): Promise<void> {
     const dir = keyDir ?? (this.config.adapterJsonPath ? dirname(this.config.adapterJsonPath) : join(process.cwd(), 'data'))
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 
@@ -140,7 +141,7 @@ export class TideDelegation {
       }
       // Request cert if not already present
       if (!this.serverIdentity?.certificate) {
-        await this.requestServerCert(dir)
+        await this.requestServerCert(dir, accessToken)
       }
       return
     }
@@ -158,7 +159,7 @@ export class TideDelegation {
     }
 
     // Request cert
-    await this.requestServerCert(dir)
+    await this.requestServerCert(dir, accessToken)
   }
 
   /**
@@ -167,8 +168,9 @@ export class TideDelegation {
    * The cert must be approved by admin quorum before mTLS works.
    *
    * @param keyDir - Directory containing server.key and server-instance-id
+   * @param accessToken - Optional bearer token sent as Authorization header
    */
-  async requestServerCert(keyDir?: string): Promise<void> {
+  async requestServerCert(keyDir?: string, accessToken?: string): Promise<void> {
     // Already have a cert - nothing to do
     if (this.serverIdentity?.certificate) {
       console.log('[tide-server] Server certificate already present')
@@ -204,7 +206,7 @@ export class TideDelegation {
       pubB64url = Buffer.from(pubDer).subarray(-32).toString('base64url')
     }
 
-    // Submit cert request (public endpoint, no auth)
+    // Submit cert request (public endpoint; optional bearer token)
     const fetchFn = this.config.fetch ?? globalThis.fetch
     const requestUrl = `${this.config.tidecloakUrl.replace(/\/+$/, '')}/realms/${this.config.realm}/tide-server-identity/request`
 
@@ -216,9 +218,11 @@ export class TideDelegation {
     console.log(`[tide-server] Requesting certificate for client=${effectiveClientId} instance=${instanceId}`)
 
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
       const response = await fetchFn(requestUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           clientId: effectiveClientId,
           publicKey: pubB64url,
