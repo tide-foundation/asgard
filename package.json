@@ -19,7 +19,8 @@
   "scripts": {
     "build:cjs": "tsc -p tsconfig.cjs.json && tsc -p node/tsconfig.cjs.json",
     "build:esm": "tsc -p tsconfig.esm.json && tsc -p node/tsconfig.esm.json",
-    "build": "npm run build:cjs && npm run build:esm",
+    "build:dist-pkg": "node -e \"const fs=require('fs');fs.mkdirSync('dist/esm/node',{recursive:true});fs.mkdirSync('dist/cjs/node',{recursive:true});fs.writeFileSync('dist/esm/node/package.json',JSON.stringify({type:'module'}));fs.writeFileSync('dist/cjs/node/package.json',JSON.stringify({type:'commonjs'}));\"",
+    "build": "npm run build:cjs && npm run build:esm && npm run build:dist-pkg",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build"
   },
