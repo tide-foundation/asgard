@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
 // Modifications Copyright (c) Tide Foundation Limited.
 
-namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
+namespace Tide.Asgard.AspNetCore.DPoP;
 
 public interface IDPoPProofValidationService
 {

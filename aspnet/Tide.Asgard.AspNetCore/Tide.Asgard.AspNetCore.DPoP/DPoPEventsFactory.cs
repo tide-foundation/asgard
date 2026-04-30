@@ -4,7 +4,7 @@
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 
-namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
+namespace Tide.Asgard.AspNetCore.DPoP;
 
 /// <summary>
 ///     Provides a factory for creating configured JwtBearerEvents instances

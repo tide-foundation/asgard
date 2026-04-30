@@ -11,9 +11,9 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
-using Tide.Asgard.AspNetCore.Authentication.DPoP;
+using Tide.Asgard.AspNetCore.DPoP;
 
-namespace Tide.Asgard.AspNetCore.Authentication.DPoP.EventHandlers;
+namespace Tide.Asgard.AspNetCore.DPoP.EventHandlers;
 
 
 /// <summary>

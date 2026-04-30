@@ -13,7 +13,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using Tide.Asgard.Core.Crypto.Ed25519;
 
-namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
+namespace Tide.Asgard.AspNetCore.DPoP;
 
 /// <summary>
 ///     Service for validating DPoP (Demonstration of Proof-of-Possession) proof tokens

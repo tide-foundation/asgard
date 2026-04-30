@@ -5,7 +5,7 @@
 using Microsoft.IdentityModel.Tokens;
 using Tide.Asgard.Core.Crypto.Ed25519;
 
-namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
+namespace Tide.Asgard.AspNetCore.DPoP;
 
 /// <summary>
 ///     Options for configuring DPoP support.

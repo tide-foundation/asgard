@@ -132,7 +132,7 @@
 		async function refresh() {
 			try {
 				await tc.updateToken(30).catch(() => {});
-				const r = await fetch('/AsgardClientCertification/ready-status', {
+				const r = await fetch('/AsgardClientCertification/ready-status/asgard_client', {
 					headers: { Authorization: `Bearer ${tc.token}` }
 				});
 				if (!r.ok) throw new Error(r.statusText);

@@ -4,18 +4,18 @@
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
-using Tide.Asgard.AspNetCore.Authentication.DPoP;
+using Tide.Asgard.AspNetCore.DPoP;
 
 namespace Tide.Asgard.AspNetCore.Authentication;
 
 /// <summary>
 ///     Post-configures <see cref="JwtBearerOptions" />
 /// </summary>
-internal class AsgardJwtBearerPostConfigureOptions : IPostConfigureOptions<JwtBearerOptions>
+internal class DPoPJwtBearerPostConfigureOptions : IPostConfigureOptions<JwtBearerOptions>
 {
 	private readonly string _authenticationScheme;
 
-	public AsgardJwtBearerPostConfigureOptions(string authenticationScheme)
+	public DPoPJwtBearerPostConfigureOptions(string authenticationScheme)
 	{
 		_authenticationScheme = authenticationScheme;
 	}

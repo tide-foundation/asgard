@@ -1,58 +1,43 @@
+using Keycloak.AuthServices.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Cryptography.X509Certificates;
 using Tide.Asgard.AspNetCore.Authentication;
-using Tide.Asgard.AspNetCore.Authentication.DPoP;
+using Tide.Asgard.AspNetCore.DPoP;
 using Tide.Asgard.Core.Crypto.Ed25519;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 
-var keycloak = builder.Configuration.GetSection("Keycloak");
-
-var signingKeySection = keycloak.GetSection("SigningKey");
-var jwk = new JsonWebKey
-{
-    Kty = signingKeySection["kty"],
-    Crv = signingKeySection["crv"],
-    X = signingKeySection["x"]
-};
-var signingKey = jwk.ToSecurityKey();
-
-// Dev only: allow the authz-server callback scheme to fetch metadata over HTTP
-// (Keycloak is on http://localhost:8080 in this example).
-// Must be registered BEFORE AddJwtBearer runs inside the SDK chain so this
-// PostConfigure fires before the framework's HTTPS validator.
-builder.Services.PostConfigure<JwtBearerOptions>(
-	AsgardAuthenticationSchemes.ClientCertificationAuthority,
-	o => o.RequireHttpsMetadata = false);
-
 builder.Services
-    .AddAsgardAuthentication(options =>
-    {
-        // Keycloak realm URL acts as both authority and issuer
-        options.Authority = keycloak["Authority"];
-        options.Audience = keycloak["Audience"];
-        options.RequireHttpsMetadata = false; // dev only - set true in production
-       // options.TokenValidationParameters.IssuerSigningKey = signingKey;
-    })
-    .SetupConfidentialClient("asgard_client", mtls =>
-    {
-        mtls.X509Certificate2 = null ;//new X509Certificate2("client.pfx");   //  <- testing auto reg
-        mtls.BaseUri = new Uri("https://localhost:8443/realms/aaa/");
-	})
-	// Use the below to set up tidecloak token exchange
-	.WithTokenExchange("audience")
-    .WithAutoClientCertification("/home/sam/creds")
-	;
+	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
+	{
+		options.RequireHttpsMetadata = false;
+		options.TokenValidationParameters.IssuerSigningKey = Utils.GetEd25519IssuerKey(builder.Configuration);
+	});
+	//.WithDPoP(opts =>
+	//{
+	//	opts.Mode = DPoPModes.Required;
+	//}); // any api protected by this authentication scheme above will require dpop proofs
+
+//builder.Services.AddTokenExchange("https://localhost:8443", builder.Configuration["Keycloak:realm"]!, ["/home/sam/creds/client.pfx"]);
+
+// add an abilitie to bind dashboard options from the configuration, but also allow us to set them here in code if we want to
+var dashboardOptionsFromConfig = new TidecloakDashboardOptions();
+builder.Configuration.GetSection("TidecloakDashboard").Bind(dashboardOptionsFromConfig);
+//builder.Services.AddAutoClientCeritificationToDashboard(dashboardOptionsFromConfig); // add auto rego abilities to this web app
+
 
 var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.UseAsgardDashboard(); // asgard!
+//app.UseTidecloakDashboard(dashboardOptionsFromConfig); // asgard!
+
+// they must do this for the single public client users use to log into the application
+//app.UseTideSecuredDPoP(builder.Configuration, "spa_client");
 
 app.UseAuthentication();
 app.UseAuthorization();

@@ -10,8 +10,16 @@ public static class ApplicationBuilderExtensions
 	/// Serves an embedded static <c>index.html</c> that polls
 	/// <c>/AsgardClientCertification/ready-status</c> for live state.
 	/// </summary>
-	public static IApplicationBuilder UseAsgardDashboard(this IApplicationBuilder app)
+	public static IApplicationBuilder UseTidecloakDashboard(
+		this IApplicationBuilder app,
+		TidecloakDashboardOptions options)
 	{
+
+		// fix this
+
+
+
+
 		var fileProvider = new EmbeddedFileProvider(
 			typeof(ApplicationBuilderExtensions).Assembly,
 			"Tide.Asgard.AspNetCore.Authentication.ClientCeritifcation.Views");

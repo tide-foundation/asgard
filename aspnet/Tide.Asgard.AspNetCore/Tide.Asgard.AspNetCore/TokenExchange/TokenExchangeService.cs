@@ -12,13 +12,15 @@ using System.Threading.Tasks;
 
 namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange
 {
-	public class TokenExchangeService(IHttpClientFactory? factory, ITokenExchangeOptions options)
+	// create an implementation of this service
+	public interface ITokenExchangeService
 	{
-		public async Task<string> ExchangeToken(IHeaderDictionary headers, string requestedAudience)
+		Task<string> ExchangeToken(IHeaderDictionary headers, string requestingClientId, string requestedAudience);
+	}
+	public class TokenExchangeService(IHttpClientFactory factory) : ITokenExchangeService
+	{
+		public async Task<string> ExchangeToken(IHeaderDictionary headers, string requestingClientId, string requestedAudience)
 		{
-			if (factory is null)
-				throw new InvalidOperationException("Client has not been registered yet");
-
 			// Determine if its an access token or dpop token
 			//   - DPoP tokens will have both an "Authorization: DPoP ..." header and a "DPoP" proof header
 			//   - Bearer tokens will only have an "Authorization: Bearer ..." header
@@ -28,16 +30,16 @@ namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange
 						 auth.ToString().StartsWith("DPoP ", StringComparison.OrdinalIgnoreCase);
 
 			if (isDPoP)
-				return await ExchangeDPoPToken(headers, requestedAudience);
+				return await ExchangeDPoPToken(headers, requestingClientId, requestedAudience);
 			else
-				return await ExchangeAccessToken(headers, requestedAudience);
+				return await ExchangeAccessToken(headers, requestingClientId, requestedAudience);
 		}
 
 		/// <summary>
 		/// Looks at the Bearer Header
 		/// </summary>
 		/// <returns></returns>
-		private async Task<string> ExchangeAccessToken(IHeaderDictionary headers, string requestedAudience)
+		private async Task<string> ExchangeAccessToken(IHeaderDictionary headers, string requestingClientId, string requestedAudience)
 		{
 			if (!headers.TryGetValue("Authorization", out var authHeader))
 				throw new UnauthorizedAccessException("Authorization header is missing.");
@@ -52,12 +54,12 @@ namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange
 			// No exchange proof validation required
 			// We can continue directly to an exchange
 
-			var client = factory.CreateClient("confidental-client");
+			var client = factory.CreateClient("asgard-token-exchange-client");
 
 			var body = new FormUrlEncodedContent(new Dictionary<string, string>
 			{
 				["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange",
-				["client_id"] = options.ClientId,
+				["client_id"] = requestingClientId,
 				["subject_token"] = userAccessToken,
 				["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
 				["audience"] = requestedAudience,
@@ -86,7 +88,7 @@ namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange
 		/// Looks at the DPoP Header
 		/// </summary>
 		/// <returns></returns>
-		private async Task<string> ExchangeDPoPToken(IHeaderDictionary headers, string requestedAudience)
+		private async Task<string> ExchangeDPoPToken(IHeaderDictionary headers, string requestingClientId, string requestedAudience)
 		{
 throw new NotImplementedException();	
 			// Ensure DPOP Authentication is enabled first - someting must first approve this dpop token
@@ -153,4 +155,6 @@ throw new NotImplementedException();
 			throw new NotImplementedException();
 		}
 	}
+	internal sealed class TokenExchangeClientMarker { }
+
 }

@@ -4,7 +4,7 @@
 
 using System.Security.Claims;
 
-namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
+namespace Tide.Asgard.AspNetCore.DPoP;
 
 /// <summary>
 ///     Encapsulates all parameters required for validating a DPoP proof token in the Asgard ASP.NET Core API Authentication

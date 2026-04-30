@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -13,27 +14,14 @@ namespace Tide.Asgard.AspNetCore.Authentication.ClientCertification.Controllers
 {
 	[ApiController]
 	[Route("[controller]")]
-	[Authorize(
-		AuthenticationSchemes = AsgardAuthenticationSchemes.ClientCertificationAuthority,
-		Roles = AsgardInitPageClient.SubmitCertificateRequestRole)]
-	public class AsgardClientCertificationController(ClientCertificationOptions options) : ControllerBase
+	[Authorize(Policy = TidecloakDashboardAuthenticationSchemes.ClientCertificationPolicy)]
+	public class AsgardClientCertificationController(IOptionsMonitor<ClientCertificationOptions> optionsMonitor) : ControllerBase
 	{
-		[HttpGet("ready-status")]
-		public IActionResult ReadyStatus()
+		[HttpGet("generate/{clientId}")]
+		public IActionResult Generate([FromRoute] string clientId)
 		{
-			return Ok(new
-			{
-				ClientType = options.ClientType.ToString(),
-				ClientId = options.ClientId,
-				Status = options.RegistrationStatus.ToString()
-			});
-		}
+			var options = optionsMonitor.Get(clientId);
 
-
-
-		[HttpGet("generate")]
-		public IActionResult Generate()
-		{
 			var current = options.RegistrationStatus;
 			if (current is RegistrationStatus.Registered or RegistrationStatus.Certifying)
 				return Conflict($"Cannot generate: client is currently {current}.");
@@ -41,7 +29,7 @@ namespace Tide.Asgard.AspNetCore.Authentication.ClientCertification.Controllers
 			using var rsa = RSA.Create(2048);
 
 			var request = new CertificateRequest(
-				new X500DistinguishedName($"CN={options.ClientId}"),
+				new X500DistinguishedName($"CN={clientId}"),
 				rsa,
 				HashAlgorithmName.SHA256,
 				RSASignaturePadding.Pkcs1);
@@ -59,9 +47,11 @@ namespace Tide.Asgard.AspNetCore.Authentication.ClientCertification.Controllers
 			return Content(request.CreateSigningRequestPem(), "application/x-pem-file");
 		}
 
-		[HttpPost("cerify")]
-		public async Task<IActionResult> Certify()
+		[HttpPost("cerify/{clientId}")]
+		public async Task<IActionResult> Certify([FromRoute] string clientId)
 		{
+			var options = optionsMonitor.Get(clientId);
+
 			// Atomically claim the certify slot. Only one caller can hold Certifying at a time;
 			// any concurrent call (or a call after Registered/Error) loses the CAS and is rejected.
 			if (!options.TrySwitchStatus(RegistrationStatus.Unregistered, RegistrationStatus.Certifying))

@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
 // Modifications Copyright (c) Tide Foundation Limited.
 
-namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
+namespace Tide.Asgard.AspNetCore.DPoP;
 
 /// <summary>
 ///     Provides a container for constant values that are used throughout the SDK.

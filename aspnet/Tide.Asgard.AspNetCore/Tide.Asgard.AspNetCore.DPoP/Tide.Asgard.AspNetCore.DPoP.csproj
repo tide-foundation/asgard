@@ -7,8 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Views\tide_dpop_auth.html" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Keycloak.AuthServices.Authentication" Version="2.9.0" />
-    <PackageReference Include="Keycloak.AuthServices.Authorization" Version="2.9.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
   </ItemGroup>
@@ -17,7 +20,4 @@
     <ProjectReference Include="..\Tide.Asgard.Core\Tide.Asgard.Core.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <EmbeddedResource Include="ClientCeritifcation\Views\index.html" />
-  </ItemGroup>
 </Project>

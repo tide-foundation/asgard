@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
 
-namespace Tide.Asgard.AspNetCore.Authentication.DPoP.EventHandlers;
+namespace Tide.Asgard.AspNetCore.DPoP.EventHandlers;
 
 public class TokenValidationHandler : DPoPEventHandlerBase, IDPoPEventHandler<TokenValidatedContext>
 {

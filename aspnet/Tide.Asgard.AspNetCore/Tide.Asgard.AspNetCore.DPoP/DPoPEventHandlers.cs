@@ -6,12 +6,9 @@ using System.Runtime.CompilerServices;
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.DependencyInjection;
-using Tide.Asgard.AspNetCore.Authentication.DPoP.EventHandlers;
+using Tide.Asgard.AspNetCore.DPoP.EventHandlers;
 
-[assembly: InternalsVisibleTo("Tide.Asgard.AspNetCore.Authentication.UnitTests")]
-[assembly: InternalsVisibleTo("DynamicProxyGenAssembly2")]
-
-namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
+namespace Tide.Asgard.AspNetCore.DPoP;
 /// <summary>
 ///     Provides event handlers for Demonstrating Proof-of-Possession (DPoP) authentication scenarios.
 ///     Handles the validation and processing of DPoP tokens and proof headers based on the configured DPoP mode.

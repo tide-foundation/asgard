@@ -93,7 +93,7 @@ async function init() {
     const authenticated = await kc.init({
       onLoad: "login-required",
       checkLoginIframe: false,
-    //  useDPoP: { mode: "strict", alg: "EdDSA" },
+     // useDPoP: { mode: "strict", alg: "EdDSA" },
     });
 
     if (authenticated) {

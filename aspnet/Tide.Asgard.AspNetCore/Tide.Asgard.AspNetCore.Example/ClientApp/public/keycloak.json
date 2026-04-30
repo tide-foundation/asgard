@@ -1,5 +1,5 @@
 {
-  "realm": "aaa",
+  "realm": "c8ee365c-48d9-42c8-bfbb-e609ce47c03b",
   "auth-server-url": "http://localhost:8080",
   "ssl-required": "external",
   "resource": "spa_client",
@@ -8,18 +8,25 @@
   "jwk": {
     "keys": [
       {
-        "kid": "bzMbPt9H5iDMQlczedad9ryWXHE1qeMJn0yZ_FCjcOw",
+        "kid": "vYi5GsyKS4zHpgDb2myD9pSDwsmzUOtUL0EoM8L3fX4",
         "kty": "OKP",
         "alg": "EdDSA",
         "use": "sig",
         "crv": "Ed25519",
-        "x": "q-WxYa8kc3OB8Bs5I312pA4l8LpUqplltJBcbbbkZh8"
+        "x": "VBqCuXEwkw_hBoBrPDfzyNcoLtFQrz2CA0tSdrOPG_I"
       }
     ]
   },
-  "vendorId": "2345871132109783819678944083370442786583089333676968916518815647322954923690",
-  "backgroundUrl": "http://localhost:8080/realms/eb9d7b94-2e78-46cd-b4ec-fd41dbe66f6c/tide-idp-resources/images/BACKGROUND_IMAGE",
-  "logoUrl": "http://localhost:8080/realms/eb9d7b94-2e78-46cd-b4ec-fd41dbe66f6c/tide-idp-resources/images/LOGO",
+  "backgroundUrl": "http://localhost:8080/realms/c8ee365c-48d9-42c8-bfbb-e609ce47c03b/tide-idp-resources/images/BACKGROUND_IMAGE",
+  "logoUrl": "http://localhost:8080/realms/c8ee365c-48d9-42c8-bfbb-e609ce47c03b/tide-idp-resources/images/LOGO",
   "homeOrkUrl": "http://localhost:1001",
-  "client-origin-auth-http://localhost:3000": "46s0DOrI3LPRDCLcYZNJ1TquRbal0+aXUd5UmmFBZ2xJJ8lAsr5ddKiB9bIcR1WH8H/+h1Z8HP9eAUOnTaUsBg=="
+  "client-origin-auth-http://localhost:3000": "I/s7jIcR2psBNyY2D1NLLFuinRQGBT79mXmGJjHaqcFjxx/RE8NWRsOfPLV+gnT8ATAqJWQu4h0jetRxkv5mDQ==",
+  "gVVK": "541a82b97130930fe106806b3c37f3c8d7282ed150af3d82034b5276b38f1bf2",
+  "vvkId": "6573594731884140231680187208743891805115113197670592226120152781151104242767",
+  "orkUrl": "http://hostgateway:1001",
+  "payerPublic": "200000f4b64caf1dd1ca3ce8b3d390a369079a8656d457d3680c32b0a6e36604933d85",
+  "obfGVVK": "541a82b97130930fe106806b3c37f3c8d7282ed150af3d82034b5276b38f1bf2",
+  "gVRKCertificate": "Qw/YALC49zebXTbK10no+KvWkK96ZJV/D0h+FE5Mmth12haHse1b0wN+HEXgGv4eKcHXv5PqBLKeMUT/FJv+CA==",
+  "thresholdT": 3,
+  "thresholdN": 5
 }
