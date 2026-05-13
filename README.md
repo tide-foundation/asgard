@@ -1,111 +1,199 @@
 # Asgard
-Vendor server-side libraries to validate and test Tide Security. 
 
-## Quick overview of Tide specific terminologies
-### Tide Request
-The data object used to communicate with the Tide Network. All information regarding the context of what you want to execute is provided inside this object.
-Fields of is object include request name, id, authorization flow requested, authorized data, informational data etc.
-### Policies and Contracts
-Together, policies and contracts create a rule system designed by you, enforced by the Tide Network. 
-Think of a contract as the function used to validate a request, and a policy as the parameters to that function.
+Asgard is a .NET authentication SDK that extends `Keycloak.AuthServices` with Tide-specific cryptography (Ed25519 signing keys) and an opinionated OAuth 2.0 Token Exchange client. It is designed to work with **Tidecloak** — Tide's distribution of Keycloak — so your ASP.NET Core APIs can validate tokens issued by a Tidecloak realm and exchange them between clients.
 
-Pseudocode example of policies + contracts:
-```js
-// You create the policy
-your_policy = {
-    max_btc_to_send: 5,
-    time_of_day_allowed: "between 10am and 4pm"
+The fastest way to see it working end-to-end is the [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) project — the snippets below mirror its setup.
+
+## Prerequisites
+
+- .NET 10 SDK
+- A running Tidecloak instance with a configured realm and licence
+
+## Repository layout
+
+The .NET solution lives at [aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln) and contains:
+
+| Project | Purpose |
+|---|---|
+| [Tide.Asgard.AspNetCore.Authentication](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/) | Main SDK — service-collection extensions, Ed25519 helpers, token exchange |
+| [Tide.Asgard.Core](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/) | Cryptography primitives (Ed25519 / EdDSA) |
+| [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) | End-to-end working sample |
+
+The SDK is currently consumed via `<ProjectReference>` — see [Tide.Asgard.AspNetCore.Example.csproj](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/Tide.Asgard.AspNetCore.Example.csproj) for the wiring.
+
+## How to add Asgard .NET Authentication to your web app
+
+### 1. Set up your Tidecloak clients
+
+A typical setup uses two clients in your realm:
+
+- A **public client** for the browser-side login page (e.g. `browser-login-page`)
+- A **confidential client** for your .NET backend (e.g. `backend`)
+
+You can add more backend clients later if you want to separate, say, admin endpoints from user endpoints.
+
+> **Note:** if you're using Tide for user authentication, create your licence in your realm before creating any clients.
+
+#### Create the browser client
+
+In your realm -> Clients -> Create client:
+- Client ID: `browser-login-page`
+- Set the redirect URIs and web origins for your login page
+- Save
+
+#### Create the backend client
+
+In your realm -> Clients -> Create client:
+- Client ID: `backend`
+- Enable **Client authentication**
+- Enable **Standard Token Exchange** (required for step 4)
+- Set the web origins
+- Save
+
+Then open the **Credentials** tab and ensure **Client Authenticator** is set to *Client ID and Secret*.
+
+#### Add an audience mapper to the browser client
+
+For the backend to accept tokens issued by `browser-login-page`, those tokens need `backend` in their `aud` claim.
+
+In your realm -> Clients -> `browser-login-page` -> Client scopes -> `browser-login-page-dedicated` -> Add mapper -> By configuration -> Audience:
+- Name: `backend-mapper`
+- Included Client Audience: `backend`
+- Save
+
+### 2. Add the adapter config to your app
+
+Each Tidecloak client exposes an **adapter config** — a JSON blob describing how an SDK should talk to it. The asgard SDK reads the backend client's adapter config from `appsettings.json`.
+
+> If you're also using tidecloak-js on the browser side, download its adapter config separately and follow the tidecloak-js instructions for installing it.
+
+**Download it:** in your realm -> Clients -> `backend` -> top-right **Action** dropdown -> **Download adapter config**, then copy the JSON.
+
+**Paste it into `appsettings.json`** under a `Keycloak` key. The nesting is required because `Keycloak.AuthServices` reads its configuration from the `Keycloak` section by default.
+
+Example:
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Keycloak.AuthServices": "Debug"
+    }
+  },
+  "AllowedHosts": "*",
+
+  "Keycloak": {
+    "realm": "test",
+    "auth-server-url": "http://localhost:8080",
+    "ssl-required": "external",
+    "resource": "backend",
+    "credentials": {
+        "secret": "dXrEdnwK5nXYa9QdRkQY8mxpBoj5G8TP"
+    },
+    "confidential-port": 0,
+    "jwk": {
+        "keys": [
+        {
+            "kid": "lQfpu9UmEbiORUienjTlbxiV5teMVbT1neXjEGgd8V4",
+            "kty": "OKP",
+            "alg": "EdDSA",
+            "use": "sig",
+            "crv": "Ed25519",
+            "x": "HcYJ2a_4pi-9g5_aVbE4_gZoPIXTlg6IQw-jiuFuifk"
+        }
+        ]
+    },
+    "backgroundUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/BACKGROUND_IMAGE",
+    "logoUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/LOGO",
+    "homeOrkUrl": "http://localhost:1001"
+  }
 }
+```
+### 3. Adding the Asgard SDK to your .NET Web Application
+Asgard currently works alongside `Keycloak.AuthServices` to provide:
+- Ed25519 Signing Key Support
 
-// You upload your own contract, or use one provided by the Network
-function your_contract_validate_func(policy){
-    check current time is in policy.time_of_day_allowed
-    check tx to sign is sending less than policy.max_btc_to_send
-    return success
-}
+Register authentication in `Program.cs`:
+```csharp
+using Keycloak.AuthServices.Authentication;
+using Tide.Asgard.AspNetCore.Authentication;
 
-// The network enforces your policy
-if your_contract_validate_func(your_policy) is success {
-    execute request
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllers();
+
+builder.Services
+	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
+	{
+		options.RequireHttpsMetadata = false;
+		options.TokenValidationParameters.IssuerSigningKey = Utils.GetEd25519IssuerKey(builder.Configuration);
+	});
+
+var app = builder.Build();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+app.Run();
+```
+
+Protect endpoints with `[Authorize]`:
+```csharp
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+[Authorize]
+[ApiController]
+[Route("[controller]")]
+public class HelloController : ControllerBase
+{
+	[HttpGet]
+	public IActionResult Get() => Ok($"Hello, {User.Identity?.Name}");
 }
 ```
 
-## Policies
-A policy is a data object that contains a set of parameters which validate a specific tide request against a contract.
+For more information on authentication - see `Keycloak.AuthServices`. That is the package that directly manages the authentication / authorization.
 
-### Policy Structure
-A policy consists of a couple fields:
-- `contractId` : The contract id that your policy is meant to execute against.
-- `modelId` : The model id (request type) your policy/contract will validate the contents of. Could be Cardano Transaction, code signing, token signature etc.
-- `keyId` : Your vendor id
-- `approvalType`: Either set to `explicit` or `implicit`. Set to `explicit` if you require the user(s) to manually approve the use of the policy with a request, or set to `implicit` if you don't require the user to manually approve its use, thus allowing its use without the user of the policy knowing.
-- `executionType`: Either set to `public` or `private`. Set ot `public` if you'd like anyone to be able to execute and retrieve the contents of the request. Or set to `private` if specific conditions for the user executing the request must be met (**logic set in contract**).
-- `params` : A key/value map of the specific values your contract requires to validate the contents of the request. This is what gets enforced by your contract onto the request.
-- `signature` : The signature of the policy from your vendor key. This is required to use a policy on the Tide Network.
+### 4. (Optional) Configuring Token Exchange Service
+OAuth 2.0 Token Exchange lets your service swap an incoming user token for a new token targeting a different audience — useful when your API needs to call another protected service on behalf of the caller.
 
-Creating a policy:
-```js
-const policyParameters = new Map();
-policyParameters.set("myNumberParam", 1);
-policyParameters.set("myStringParam", "test");
-policyParameters.set("myBigIntParam", BigInt(2));
-policyParameters.set("myBooleanParam", true);
-policyParameters.set("myByteArrayParam", new Uint8Array([0, 2, 1, 3]));
+Register the service:
+```csharp
+using Tide.Asgard.AspNetCore.Authentication;
 
-const policy = new Policy({
-    modelId: "<model id to use with this policy>",
-    contractId: "<contract id to use with this policy>",
-    keyId: "<your vendor id>",
-    approvalType: "explicit",
-    executionType: "public",
-    params: policyParameters
-});
+builder.Services.AddTokenExchange(builder.Configuration);
 ```
 
-### Creating a policy for your organization
-Any policy you create will create a linkage between either a single Tide Request and a single Contract - or any Tide Request and a single Contract. 
+`AddTokenExchange` also has an overload taking an `IConfigurationSection`, so you can register multiple token-exchange clients in the same app by passing different sections.
 
-The relationship betweent the contract, policy and tide request is as follows:
-1. Contract contains the logic to check policy parameters against a tide request. Contract logic sits on the network's nodes.
-2. The policy contains the actual values the contract will check the tide request against. Policies sit on specific applications using the policy (such as a crypto wallet).
-3. The tide request contains the policy as part of its payload when sent to the network. Aside from that it is simply a data model.
+Inject `ITokenExchangeService` and call `ExchangeToken`:
+```csharp
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 
-To create a policy, you'll have to create the Policy object then execute a PolicySignRequest to authorize its use. 
+[Authorize]
+[ApiController]
+[Route("[controller]")]
+public class HelloController(ITokenExchangeService exchangeService) : ControllerBase
+{
+	[HttpGet]
+	public async Task<IActionResult> Get()
+	{
+		var token = await exchangeService.ExchangeToken(
+			HttpContext.Request.Headers,
+			requestingClientId: "backend",
+			requestedAudience: "account");
 
-Here's the syntax for it:
-```js
-const policySignRequest = PolicySignRequest.New(policy); // PolicySignRequest will return a single signature of the Policy you added to the PolicySignRequest
-const policySignature = // see 7. Executing Tide Requests on tidecloak-js on how to execute a tide request
-policy.signature = policySignature;
-const policyDataToStore = policy.encode(); // You can now store this signed policy for your client application to use when authorizing tide requests you specified in policy.modelId
+		return Ok(token);
+	}
+}
 ```
-
-## Contracts
-### Contract Structure
-All contracts that execute on the Tide Network require the implementation of 3 functions.
-
-1. `validate_request` - Always required for checking policy details against the request's contents.
-2. `validate_approvers` - Required if you intend to use policies with `approvalType` set to **explicit**. This is where the logic that determines if the users that approved this request has the specific roles/conditions to do so.
-3. `validate_executor` - Required if you intend to use policies with `executionType` set to **private**. This is where the logic that determines if the user that executed this request had the correct roles/condition to do so.
-
-Constructing a contract on Tide for now is extraodinarily complex and you probably won't be doing it. TODO
-
-## Other specific niches to know about
-### Custom Requests
-Looking to sign your own kind of custom data with Tide? Look no further. This is where I intend to butcher the explanation of it.
-
-There are 3 types of `CustomRequest` on Tide - each intended to best fit your specific type of request.
-
-1. `BasicCustomRequest` - A basic request. You have all the data your require to be validated at the time of request creation.
-2. `DyanmicPayloadCustomRequest` - A request with the data to be signed in the dynamic part of the request (which can be changed from the time the request was created). 
-3. `DynamicPayloadApprovedCustomRequest` - A request with the data to be signed in the dynamic part of the request that also requires `explicit` approval from the users. This requires the use of a Human Readable object in the authorized payload to ensure the details shown to an approver at approval time can be verified against the signing data added to the request dynamically later.
-
-### Basic Contract Test Validation
 
 ## License
 
 This project is dual-licensed:
 
-- **TypeScript libraries** (`src/`): Licensed under the [Tide Community Open Code License](LICENSE).
-- **ASP.NET Core authentication libraries** (`aspnet/Tide.Asgard.AspNetCore/`): Derived from the [Auth0 ASP.NET Core Authentication API](https://github.com/auth0/aspnetcore-api), which is licensed under the [Apache License 2.0](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/LICENSE-APACHE-2.0). Modifications by Tide Foundation Limited are subject to both the Apache 2.0 license (for the derived portions) and the Tide Community Open Code License (for new additions). See the [NOTICE](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/NOTICE) file for full attribution details.
-- **Core cryptography libraries** (`aspnet/Tide.Asgard.Core/`): Derived from [ScottBrady.IdentityModel](https://github.com/scottbrady91/IdentityModel), which is licensed under the [Apache License 2.0](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/LICENSE-APACHE-2.0). Modifications by Tide Foundation Limited are subject to both the Apache 2.0 license (for the derived portions) and the Tide Community Open Code License (for new additions). See the [NOTICE](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/NOTICE) file for full attribution details.
+- **ASP.NET Core authentication libraries** (`aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/`): Derived from the [Auth0 ASP.NET Core Authentication API](https://github.com/auth0/aspnetcore-api), which is licensed under the [Apache License 2.0](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/LICENSE-APACHE-2.0). Modifications by Tide Foundation Limited are subject to both the Apache 2.0 license (for the derived portions) and the Tide Community Open Code License (for new additions). See the [NOTICE](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/NOTICE) file for full attribution details.
+- **Core cryptography libraries** (`aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/`): Derived from [ScottBrady.IdentityModel](https://github.com/scottbrady91/IdentityModel), which is licensed under the [Apache License 2.0](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/LICENSE-APACHE-2.0). Modifications by Tide Foundation Limited are subject to both the Apache 2.0 license (for the derived portions) and the Tide Community Open Code License (for new additions). See the [NOTICE](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/NOTICE) file for full attribution details.
