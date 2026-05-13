@@ -54,7 +54,7 @@ namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange
 			// No exchange proof validation required
 			// We can continue directly to an exchange
 
-			var client = factory.CreateClient("asgard-token-exchange-client");
+			var client = factory.CreateClient("asgard-token-exchange-client:" + requestingClientId);
 
 			var body = new FormUrlEncodedContent(new Dictionary<string, string>
 			{

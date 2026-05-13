@@ -12,12 +12,12 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 		[HttpGet]
 		public async Task<IActionResult> Get()
 		{
-			//var token = await exchangeService.ExchangeToken(
-			//	HttpContext.Request.Headers, 
-			//	"asgard_client", 
-			//	"account");
+			var token = await exchangeService.ExchangeToken(
+				HttpContext.Request.Headers,
+				"backend",
+				"account");
 
-			return Ok("hey");
+			return Ok(token);
 		}
 	}
 }

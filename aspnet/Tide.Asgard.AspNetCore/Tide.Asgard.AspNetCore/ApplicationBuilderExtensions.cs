@@ -10,34 +10,34 @@ public static class ApplicationBuilderExtensions
 	/// Serves an embedded static <c>index.html</c> that polls
 	/// <c>/AsgardClientCertification/ready-status</c> for live state.
 	/// </summary>
-	public static IApplicationBuilder UseTidecloakDashboard(
-		this IApplicationBuilder app,
-		TidecloakDashboardOptions options)
-	{
+	//public static IApplicationBuilder UseTidecloakDashboard(
+	//	this IApplicationBuilder app,
+	//	TidecloakDashboardOptions options)
+	//{
 
-		// fix this
-
-
+	//	// fix this
 
 
-		var fileProvider = new EmbeddedFileProvider(
-			typeof(ApplicationBuilderExtensions).Assembly,
-			"Tide.Asgard.AspNetCore.Authentication.ClientCeritifcation.Views");
 
-		var opts = new StaticFileOptions
-		{
-			FileProvider = fileProvider,
-			RequestPath = "/asgard"
-		};
 
-		app.UseDefaultFiles(new DefaultFilesOptions
-		{
-			FileProvider = fileProvider,
-			RequestPath = "/asgard"
-		});
+	//	var fileProvider = new EmbeddedFileProvider(
+	//		typeof(ApplicationBuilderExtensions).Assembly,
+	//		"Tide.Asgard.AspNetCore.Authentication.ClientCeritifcation.Views");
 
-		app.UseStaticFiles(opts);
+	//	var opts = new StaticFileOptions
+	//	{
+	//		FileProvider = fileProvider,
+	//		RequestPath = "/asgard"
+	//	};
 
-		return app;
-	}
+	//	app.UseDefaultFiles(new DefaultFilesOptions
+	//	{
+	//		FileProvider = fileProvider,
+	//		RequestPath = "/asgard"
+	//	});
+
+	//	app.UseStaticFiles(opts);
+
+	//	return app;
+	//}
 }

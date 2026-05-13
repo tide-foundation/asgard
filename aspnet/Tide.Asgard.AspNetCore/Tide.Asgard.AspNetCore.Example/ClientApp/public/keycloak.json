@@ -1,32 +1,13 @@
 {
-  "realm": "c8ee365c-48d9-42c8-bfbb-e609ce47c03b",
-  "auth-server-url": "http://localhost:8080",
+  "realm": "test",
+  "auth-server-url": "http://localhost:8080/",
   "ssl-required": "external",
   "resource": "spa_client",
   "public-client": true,
   "confidential-port": 0,
-  "jwk": {
-    "keys": [
-      {
-        "kid": "vYi5GsyKS4zHpgDb2myD9pSDwsmzUOtUL0EoM8L3fX4",
-        "kty": "OKP",
-        "alg": "EdDSA",
-        "use": "sig",
-        "crv": "Ed25519",
-        "x": "VBqCuXEwkw_hBoBrPDfzyNcoLtFQrz2CA0tSdrOPG_I"
-      }
-    ]
-  },
-  "backgroundUrl": "http://localhost:8080/realms/c8ee365c-48d9-42c8-bfbb-e609ce47c03b/tide-idp-resources/images/BACKGROUND_IMAGE",
-  "logoUrl": "http://localhost:8080/realms/c8ee365c-48d9-42c8-bfbb-e609ce47c03b/tide-idp-resources/images/LOGO",
-  "homeOrkUrl": "http://localhost:1001",
-  "client-origin-auth-http://localhost:3000": "I/s7jIcR2psBNyY2D1NLLFuinRQGBT79mXmGJjHaqcFjxx/RE8NWRsOfPLV+gnT8ATAqJWQu4h0jetRxkv5mDQ==",
-  "gVVK": "541a82b97130930fe106806b3c37f3c8d7282ed150af3d82034b5276b38f1bf2",
-  "vvkId": "6573594731884140231680187208743891805115113197670592226120152781151104242767",
-  "orkUrl": "http://hostgateway:1001",
-  "payerPublic": "200000f4b64caf1dd1ca3ce8b3d390a369079a8656d457d3680c32b0a6e36604933d85",
-  "obfGVVK": "541a82b97130930fe106806b3c37f3c8d7282ed150af3d82034b5276b38f1bf2",
-  "gVRKCertificate": "Qw/YALC49zebXTbK10no+KvWkK96ZJV/D0h+FE5Mmth12haHse1b0wN+HEXgGv4eKcHXv5PqBLKeMUT/FJv+CA==",
-  "thresholdT": 3,
-  "thresholdN": 5
+  "vendorId": "1857513746844407167493926328928472162792388476093024171333438099358122973259",
+  "backgroundUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/BACKGROUND_IMAGE",
+  "logoUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/LOGO",
+  "homeOrkUrl": "https://ork1.tideprotocol.com",
+  "client-origin-auth-http://localhost:3000": "o/oKN2mu0gZhErC9SQ/O5+hByUX/hMZ4zZkhsgAa+XbRgPT/enCmoLlOsOWd/xniqneRTCYSww5oDy+HMRLyDg=="
 }
