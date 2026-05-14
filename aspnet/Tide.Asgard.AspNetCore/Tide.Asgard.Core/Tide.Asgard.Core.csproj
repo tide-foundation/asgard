@@ -4,11 +4,32 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <PackageId>Tide.Asgard.Core</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Tide Foundation Limited</Authors>
+    <Company>Tide Foundation Limited</Company>
+    <Description>Cryptography primitives (Ed25519 / EdDSA) for the Tide Asgard authentication SDK. Derived from ScottBrady.IdentityModel (Apache-2.0).</Description>
+    <PackageTags>tide;asgard;tidecloak;ed25519;eddsa;cryptography</PackageTags>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/tide-foundation/asgard</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tide-foundation/asgard</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.15.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="LICENSE.txt" Pack="true" PackagePath="\" />
+    <None Include="LICENSE-APACHE-2.0" Pack="true" PackagePath="\" />
+    <None Include="NOTICE" Pack="true" PackagePath="\" />
+    <None Include="..\..\..\README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
 </Project>

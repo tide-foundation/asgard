@@ -4,6 +4,20 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <PackageId>Tide.Asgard.AspNetCore.Authentication</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Tide Foundation Limited</Authors>
+    <Company>Tide Foundation Limited</Company>
+    <Description>ASP.NET Core authentication SDK for Tidecloak. Extends Keycloak.AuthServices with Ed25519 signing-key support and an OAuth 2.0 Token Exchange client. Derived from the Auth0 ASP.NET Core Authentication API (Apache-2.0).</Description>
+    <PackageTags>tide;asgard;tidecloak;keycloak;authentication;aspnetcore;ed25519;token-exchange</PackageTags>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/tide-foundation/asgard</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tide-foundation/asgard</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,5 +33,12 @@
 
   <ItemGroup>
     <EmbeddedResource Include="ClientCeritifcation\Views\index.html" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="LICENSE.txt" Pack="true" PackagePath="\" />
+    <None Include="LICENSE-APACHE-2.0" Pack="true" PackagePath="\" />
+    <None Include="NOTICE" Pack="true" PackagePath="\" />
+    <None Include="..\..\..\README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 </Project>
