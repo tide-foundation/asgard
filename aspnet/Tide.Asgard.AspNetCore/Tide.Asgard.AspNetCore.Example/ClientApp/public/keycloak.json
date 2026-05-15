@@ -1,0 +1,24 @@
+{
+  "realm": "test",
+  "auth-server-url": "http://localhost:8080",
+  "ssl-required": "external",
+  "resource": "browser-login-page",
+  "public-client": true,
+  "confidential-port": 0,
+  "jwk": {
+    "keys": [
+      {
+        "kid": "lQfpu9UmEbiORUienjTlbxiV5teMVbT1neXjEGgd8V4",
+        "kty": "OKP",
+        "alg": "EdDSA",
+        "use": "sig",
+        "crv": "Ed25519",
+        "x": "HcYJ2a_4pi-9g5_aVbE4_gZoPIXTlg6IQw-jiuFuifk"
+      }
+    ]
+  },
+  "backgroundUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/BACKGROUND_IMAGE",
+  "logoUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/LOGO",
+  "homeOrkUrl": "http://localhost:1001",
+  "client-origin-auth-http://localhost:3000": "YHYw3WB7acxSOC6bLL97Htt/uwBiN/3BVG43oA6jMtqG000TM4v/TrFVhKxPIRmd0B0XBv8O/30erby2V9uQDQ=="
+}

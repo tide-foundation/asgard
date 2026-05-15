@@ -1,2 +1,56 @@
-/node_modules
-/dist
+# Dependencies
+node_modules/
+
+# TypeScript build output
+dist/
+
+# .NET build artifacts
+bin/
+obj/
+
+# NuGet
+*.nupkg
+*.snupkg
+project.assets.json
+*.nuget.props
+*.nuget.targets
+*.nuget.g.props
+*.nuget.g.targets
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# JetBrains IDEs
+.idea/
+*.iml
+
+# VS Code (optional local settings)
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment / secrets
+.env
+.env.*
+appsettings.Local.json
+
+# Vite / SPA build output
+wwwroot/
+
+# Misc
+*.swp
+*.swo
+*~

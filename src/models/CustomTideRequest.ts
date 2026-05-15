@@ -1,3 +1,6 @@
+// Copyright (c) Tide Foundation Limited. All rights reserved.
+// Licensed under the Tide Community Open Code License. See LICENSE in the project root.
+
 import { StringFromUint8Array, StringToUint8Array } from "../utils/Serialization";
 import { TideMemory } from "../utils/TideMemory";
 import BaseTideRequest from "./TideRequest";

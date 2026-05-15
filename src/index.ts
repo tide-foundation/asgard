@@ -1,3 +1,6 @@
+// Copyright (c) Tide Foundation Limited. All rights reserved.
+// Licensed under the Tide Community Open Code License. See LICENSE in the project root.
+
 import { BaseContract } from "./contracts/BaseContract";
 import { GenericResourceAccessThresholdRoleContract } from "./contracts/GenericResourceAccessThresholdRoleContract";
 import { GenericRealmAccessThresholdRoleContract } from "./contracts/GenericRealmAccessThresholdRoleContract";
