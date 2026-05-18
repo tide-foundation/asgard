@@ -1,0 +1,15 @@
+This product includes code derived from:
+
+  ScottBrady.IdentityModel
+  https://github.com/scottbrady91/IdentityModel
+  Copyright Scott Brady
+  Licensed under the Apache License, Version 2.0
+
+  Modifications: Renamed namespaces from ScottBrady.IdentityModel to
+  Tide.Asgard.Core, and other adaptations for the Tide Asgard platform.
+  Modifications by Tide Foundation Limited are subject to both the
+  Apache 2.0 license (for the derived portions) and the Tide Community
+  Open Code License (for new additions). See the root LICENSE file.
+
+  A copy of the Apache License 2.0 is included in this directory
+  as LICENSE-APACHE-2.0.

@@ -1,3 +1,6 @@
+// Copyright (c) Tide Foundation Limited. All rights reserved.
+// Licensed under the Tide Community Open Code License. See LICENSE in the project root.
+
 import { Doken } from "../contracts/BaseContract.js";
 import { TideMemory } from "../utils/TideMemory.js";
 import { Policy } from "./Policy.js";

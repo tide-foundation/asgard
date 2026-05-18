@@ -1,3 +1,6 @@
+// Copyright (c) Tide Foundation Limited. All rights reserved.
+// Licensed under the Tide Community Open Code License. See LICENSE in the project root.
+
 import { Policy } from "../models/Policy";
 import { BaseContract, Doken } from "./BaseContract";
 
