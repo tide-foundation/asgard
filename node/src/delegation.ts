@@ -31,7 +31,26 @@ export interface DelegationConfig {
   privateKey?: string
   /** Path to tidecloak.json (auto-loads serverIdentity if present) */
   adapterJsonPath?: string
+  /**
+   * Overall timeout (ms) for the automatic cert status poll started after a
+   * cert request. If the request is not approved within this window the poll
+   * stops and the server runs without mTLS until the next restart re-polls.
+   * Default: CERT_POLL_TIMEOUT_MS.
+   */
+  certPollTimeoutMs?: number
 }
+
+/** Persisted cert file names written alongside server.key in keyDir. */
+const CERT_FILE_NAME = 'server.crt'
+const TRUST_BUNDLE_FILE_NAME = 'server-trust-bundle.pem'
+const SPIFFE_FILE_NAME = 'server-spiffe-id'
+
+/** Initial poll interval (ms) for cert status. */
+const CERT_POLL_INITIAL_MS = 4000
+/** Maximum poll interval (ms) after backoff. */
+const CERT_POLL_MAX_MS = 30000
+/** Default overall poll timeout (ms) - a few minutes. */
+const CERT_POLL_TIMEOUT_MS = 5 * 60 * 1000
 
 export interface DelegationRequest {
   /** Target audience */
@@ -78,6 +97,9 @@ export class TideDelegation {
 
   /** SHA-256 thumbprint of the server cert (for cnf.x5t#S256 binding) */
   private certThumbprint: string | null = null
+
+  /** In-flight background cert status poll, if any. */
+  private certPoll: Promise<void> | null = null
 
   constructor(config: DelegationConfig) {
     this.config = config
@@ -128,6 +150,13 @@ export class TideDelegation {
     if (this.isMtlsEnabled()) {
       console.log('[tide-server] mTLS already configured')
       return
+    }
+
+    // Prefer a previously persisted cert from keyDir over a (re-)request.
+    // This is written by the automatic status poll on a prior run, so a
+    // restart does not re-request an already-issued certificate.
+    if (!this.serverIdentity?.certificate) {
+      this.loadPersistedCert(dir)
     }
 
     const keyPath = join(dir, 'server.key')
@@ -233,17 +262,178 @@ export class TideDelegation {
 
       if (response.ok) {
         const result = await response.json() as any
-        console.log(`[tide-server] Certificate request submitted (changeSetId: ${result.changeSetId})`)
+        const changeSetId = result?.changeSetId
+        console.log(`[tide-server] Certificate request submitted (changeSetId: ${changeSetId})`)
         console.log(`[tide-server] Approve in TideCloak Admin > Realm Settings > Server Certs`)
-        console.log(`[tide-server] Then re-export adapter JSON to include the signed certificate`)
+        if (changeSetId) {
+          this.startCertStatusPoll(String(changeSetId), dir, accessToken)
+        } else {
+          console.warn('[tide-server] No changeSetId returned - cannot poll for cert status')
+        }
       } else if (response.status === 409) {
-        console.log('[tide-server] Certificate request already pending - approve in TideCloak Admin')
+        // Already pending. Recover the changeSetId if the server returns it so
+        // we can poll the existing request rather than re-submitting.
+        let changeSetId: string | undefined
+        try {
+          const body = await response.json() as any
+          changeSetId = body?.changeSetId ?? body?.existingChangeSetId
+        } catch {
+          // body not JSON / no changeSetId
+        }
+        if (changeSetId) {
+          console.log(`[tide-server] Certificate request already pending (changeSetId: ${changeSetId}) - polling existing request`)
+          this.startCertStatusPoll(String(changeSetId), dir, accessToken)
+        } else {
+          console.log('[tide-server] Certificate request already pending - approve in TideCloak Admin')
+        }
       } else {
         const err = await response.text()
         console.warn(`[tide-server] Certificate request failed (${response.status}): ${err}`)
       }
     } catch (err) {
       console.warn(`[tide-server] Could not reach TideCloak: ${(err as Error).message}`)
+    }
+  }
+
+  /**
+   * Start a bounded background poll of the cert status endpoint.
+   *
+   * The admin approval is asynchronous (a human approves whenever), so this
+   * MUST NOT block server startup. The poll runs in the background with
+   * interval backoff up to certPollTimeoutMs. On ACTIVE it persists the cert
+   * to keyDir and brings up mTLS automatically (no manual re-export). On
+   * timeout it logs and returns, leaving the server running without mTLS until
+   * the next restart re-polls.
+   *
+   * The returned promise is also stored on this.certPoll so callers/tests can
+   * optionally await it; init()/startup do not await it.
+   */
+  private startCertStatusPoll(changeSetId: string, keyDir: string, accessToken?: string): Promise<void> {
+    if (this.certPoll) return this.certPoll
+    this.certPoll = this.pollCertStatus(changeSetId, keyDir, accessToken).finally(() => {
+      this.certPoll = null
+    })
+    // Do not let an unawaited rejection crash the process.
+    this.certPoll.catch(() => {})
+    return this.certPoll
+  }
+
+  private async pollCertStatus(changeSetId: string, keyDir: string, accessToken?: string): Promise<void> {
+    const fetchFn = this.config.fetch ?? globalThis.fetch
+    const statusUrl = `${this.config.tidecloakUrl.replace(/\/+$/, '')}/realms/${this.config.realm}/tide-server-identity/status?changeSetId=${encodeURIComponent(changeSetId)}`
+    const timeoutMs = this.config.certPollTimeoutMs ?? CERT_POLL_TIMEOUT_MS
+    const deadline = Date.now() + timeoutMs
+
+    let interval = CERT_POLL_INITIAL_MS
+    console.log(`[tide-server] Polling cert status for changeSetId=${changeSetId} (timeout ${Math.round(timeoutMs / 1000)}s)`)
+
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, interval))
+      try {
+        const headers: Record<string, string> = {}
+        if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+        const response = await fetchFn(statusUrl, { method: 'GET', headers })
+        if (!response.ok) {
+          console.warn(`[tide-server] Cert status poll failed (${response.status}); will retry`)
+        } else {
+          const result = await response.json() as any
+          if (result?.status === 'ACTIVE' && result.certificate && result.trustBundle) {
+            this.applyIssuedCert(
+              {
+                spiffeId: result.spiffeId,
+                certificate: result.certificate,
+                trustBundle: result.trustBundle,
+              },
+              keyDir,
+            )
+            console.log(`[tide-server] Certificate issued and mTLS enabled (changeSetId=${changeSetId}, spiffeId=${result.spiffeId})`)
+            return
+          }
+          console.log(`[tide-server] Cert request ${changeSetId} status=${result?.status ?? 'unknown'} - still pending approval`)
+        }
+      } catch (err) {
+        console.warn(`[tide-server] Cert status poll error: ${(err as Error).message}; will retry`)
+      }
+      interval = Math.min(interval * 2, CERT_POLL_MAX_MS)
+    }
+
+    console.log(`[tide-server] cert request ${changeSetId} still pending approval; will run without mTLS until approved`)
+  }
+
+  /**
+   * Persist an issued cert to keyDir, wire up serverIdentity + thumbprint, and
+   * bring up the mTLS agent using the existing private key. No manual re-export
+   * of tidecloak.json is required.
+   */
+  private applyIssuedCert(
+    issued: { spiffeId: string; certificate: string; trustBundle: string },
+    keyDir: string,
+  ): void {
+    const certPath = join(keyDir, CERT_FILE_NAME)
+    const trustPath = join(keyDir, TRUST_BUNDLE_FILE_NAME)
+    const spiffePath = join(keyDir, SPIFFE_FILE_NAME)
+    writeFileSync(certPath, issued.certificate)
+    writeFileSync(trustPath, issued.trustBundle)
+    if (issued.spiffeId) writeFileSync(spiffePath, issued.spiffeId)
+    console.log(`[tide-server] Persisted certificate to ${certPath} and trust bundle to ${trustPath}`)
+
+    // Recover the instance ID written during the request, if present.
+    let instanceId: string | undefined
+    try {
+      instanceId = readFileSync(join(keyDir, 'server-instance-id'), 'utf-8').trim()
+    } catch {
+      // no instance id file
+    }
+
+    this.serverIdentity = {
+      spiffeId: issued.spiffeId,
+      certificate: issued.certificate,
+      trustBundle: issued.trustBundle,
+      instanceId,
+    }
+    this.certThumbprint = this.computeCertThumbprint(issued.certificate)
+
+    // Bring up the mTLS agent with the persisted private key.
+    const keyPath = join(keyDir, 'server.key')
+    if (existsSync(keyPath)) {
+      this.setMtlsKey(readFileSync(keyPath, 'utf-8'))
+    } else {
+      console.warn(`[tide-server] Cert issued but ${keyPath} missing - cannot enable mTLS`)
+    }
+  }
+
+  /**
+   * Load a previously persisted cert (server.crt + server-trust-bundle.pem)
+   * from keyDir if present, populating serverIdentity + thumbprint. The mTLS
+   * agent is wired later in init() once the private key is loaded. Returns true
+   * if a persisted cert was loaded.
+   */
+  private loadPersistedCert(keyDir: string): boolean {
+    const certPath = join(keyDir, CERT_FILE_NAME)
+    const trustPath = join(keyDir, TRUST_BUNDLE_FILE_NAME)
+    if (!existsSync(certPath) || !existsSync(trustPath)) return false
+    try {
+      const certificate = readFileSync(certPath, 'utf-8')
+      const trustBundle = readFileSync(trustPath, 'utf-8')
+      let spiffeId = ''
+      try {
+        spiffeId = readFileSync(join(keyDir, SPIFFE_FILE_NAME), 'utf-8').trim()
+      } catch {
+        // spiffe id file optional
+      }
+      let instanceId: string | undefined
+      try {
+        instanceId = readFileSync(join(keyDir, 'server-instance-id'), 'utf-8').trim()
+      } catch {
+        // optional
+      }
+      this.serverIdentity = { spiffeId, certificate, trustBundle, instanceId }
+      this.certThumbprint = this.computeCertThumbprint(certificate)
+      console.log(`[tide-server] Loaded persisted certificate from ${certPath}`)
+      return true
+    } catch (err) {
+      console.warn(`[tide-server] Failed to load persisted cert: ${(err as Error).message}`)
+      return false
     }
   }
 
