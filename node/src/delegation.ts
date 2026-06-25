@@ -38,6 +38,12 @@ export interface DelegationConfig {
    * Default: CERT_POLL_TIMEOUT_MS.
    */
   certPollTimeoutMs?: number
+  /**
+   * One-time enrollment token used to authenticate the server-cert request
+   * endpoint (sent as `Authorization: Bearer <token>`). An explicit
+   * accessToken argument to requestServerCert() takes precedence over this.
+   */
+  enrollmentToken?: string
 }
 
 /** Persisted cert file names written alongside server.key in keyDir. */
@@ -110,6 +116,12 @@ export class TideDelegation {
         const adapterJson = JSON.parse(readFileSync(config.adapterJsonPath, 'utf-8'))
         if (adapterJson.serverIdentity) {
           config.serverIdentity = adapterJson.serverIdentity
+        }
+        // Auto-load the server client ID from the adapter JSON when not set, so
+        // enrollment does not silently no-op when serverClientId is omitted.
+        if (!config.serverClientId) {
+          const serverResource = adapterJson.serverResource ?? adapterJson.resource
+          if (serverResource) config.serverClientId = serverResource
         }
       } catch {
         // Adapter JSON not found or no serverIdentity
@@ -248,7 +260,9 @@ export class TideDelegation {
 
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+      // Explicit arg wins; otherwise fall back to the configured enrollment token.
+      const token = accessToken ?? this.config.enrollmentToken
+      if (token) headers['Authorization'] = `Bearer ${token}`
       const response = await fetchFn(requestUrl, {
         method: 'POST',
         headers,
@@ -286,6 +300,23 @@ export class TideDelegation {
         } else {
           console.log('[tide-server] Certificate request already pending - approve in TideCloak Admin')
         }
+      } else if (response.status === 401 || response.status === 403) {
+        // One-time enrollment token rejected (already consumed or invalid). This
+        // is expected on a restart after the first request consumed the token:
+        // the cert request is likely already pending admin approval. Do not
+        // crash; the persisted cert will be picked up once issued.
+        let changeSetId: string | undefined
+        try {
+          const body = await response.json() as any
+          changeSetId = body?.changeSetId ?? body?.existingChangeSetId
+        } catch {
+          // body not JSON / no changeSetId
+        }
+        console.warn('[tide-server] Enrollment token rejected (already consumed or invalid); the request may already be pending admin approval. Will use the persisted cert once issued.')
+        if (changeSetId) {
+          this.startCertStatusPoll(String(changeSetId), dir, accessToken)
+        }
+        return
       } else {
         const err = await response.text()
         console.warn(`[tide-server] Certificate request failed (${response.status}): ${err}`)
