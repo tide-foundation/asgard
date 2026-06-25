@@ -40,7 +40,8 @@ export interface DelegationConfig {
   certPollTimeoutMs?: number
   /**
    * One-time enrollment token used to authenticate the server-cert request
-   * endpoint (sent as `Authorization: Bearer <token>`). An explicit
+   * endpoint (sent as `Authorization: Bearer <token>`). Auto-loaded from the
+   * adapter JSON (`enrollmentToken`) when not set directly. An explicit
    * accessToken argument to requestServerCert() takes precedence over this.
    */
   enrollmentToken?: string
@@ -122,6 +123,11 @@ export class TideDelegation {
         if (!config.serverClientId) {
           const serverResource = adapterJson.serverResource ?? adapterJson.resource
           if (serverResource) config.serverClientId = serverResource
+        }
+        // Auto-load the one-time enrollment token from the adapter JSON when not
+        // set directly, so the operator only needs the adapter JSON to enroll.
+        if (!config.enrollmentToken && adapterJson.enrollmentToken) {
+          config.enrollmentToken = adapterJson.enrollmentToken
         }
       } catch {
         // Adapter JSON not found or no serverIdentity
