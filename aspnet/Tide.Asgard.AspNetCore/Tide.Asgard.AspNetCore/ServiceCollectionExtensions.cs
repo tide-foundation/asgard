@@ -10,6 +10,7 @@ using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
+using Tide.Asgard.Core.Policy;
 
 namespace Tide.Asgard.AspNetCore.Authentication;
 
@@ -74,7 +75,7 @@ public static class ServiceCollectionExtensions
 	//}
 
 	// add support for the configuration to be a section to allow for multiple token exchange clients to be configured in the same app
-	public static IServiceCollection AddTokenExchange(
+	public static IServiceCollection AddTokenExchangeForClient(
 		this IServiceCollection services,
 		IConfigurationSection configurationSection
 		)
@@ -114,7 +115,7 @@ public static class ServiceCollectionExtensions
 		ArgumentNullException.ThrowIfNull(services);
 		ArgumentNullException.ThrowIfNull(configuration);
 
-		return AddTokenExchange(services, configuration.GetSection("Keycloak") ?? throw new InvalidOperationException("Missing required configuration section: Keycloak"));
+		return AddTokenExchangeForClient(services, configuration.GetSection("Keycloak") ?? throw new InvalidOperationException("Missing required configuration section: Keycloak"));
 	}
 
 	//public static IServiceCollection AddAutoClientCeritificationToDashboard(

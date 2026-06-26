@@ -24,8 +24,6 @@ builder.Services
 builder.Services.AddTokenExchange(builder.Configuration);
 
 // add an abilitie to bind dashboard options from the configuration, but also allow us to set them here in code if we want to
-var dashboardOptionsFromConfig = new TidecloakDashboardOptions();
-builder.Configuration.GetSection("TidecloakDashboard").Bind(dashboardOptionsFromConfig);
 //builder.Services.AddAutoClientCeritificationToDashboard(dashboardOptionsFromConfig); // add auto rego abilities to this web app
 
 
