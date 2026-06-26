@@ -22,34 +22,25 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 				"account-agent"
 				);
 
-			EncryptWithAgent(token);
 
-			// store cipher somehwere
-
-			return Ok(cipher);
-		}
-
-
-	private void EncryptWithAgent(string token)
-	{
 			var client = new TideNetworkClient(token);
 
 
 			// set up encryption options
-			var encryptionOptions = new LockOptions
+			var lockOptions = new LockOptions
 			{
 				Policy = await policyCache.GetUserPolicy("userid1", "assessment1")
 			};
 
 			// add the object to encrypt
-			encryptionOptions.AddItemToLock(new ItemToLock
+			lockOptions.AddItemToLock(new ItemToLock
 			{
 				ItemId = "id1",
 				Tags = ["staff data", "date of birth"],
 				Data = Encoding.UTF8.GetBytes("hello!"),
 			});
 
-			encryptionOptions.AddItemToLock(new ItemToLock
+			lockOptions.AddItemToLock(new ItemToLock
 			{
 				ItemId = "id2",
 				Tags = ["staff data", "date of birth"],
@@ -57,16 +48,16 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 			});
 
 			// encrypt using tide
-			var response = await client.Lock(encryptionOptions);
+			var response = await client.Lock(lockOptions);
 
 			// get the cipher from the encrypted response
 			var cipher = response.GetLockedItemById("id1").Cipher;
 
 			var cipher2 = response.GetLockedItemById("id2").Cipher;
 
-
 			var cipherButDifferentFetch = response.LockedItems.First().Cipher;
 
+			return Ok(cipher);
 		}
 	}
 }

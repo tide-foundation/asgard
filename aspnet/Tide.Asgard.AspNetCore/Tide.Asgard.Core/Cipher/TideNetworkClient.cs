@@ -6,8 +6,8 @@ namespace Tide.Asgard.Core.Cipher;
 
 public interface ITideNetworkClient
 {
-	void Lock();
-	void Unlock();
+	Task<LockResponse> Lock(LockOptions lockOptions);
+	Task<UnlockResponse> Unlock(UnlockOptions unlockOptions);
 }
 public class TideNetworkClient(string authToken) : ITideNetworkClient
 {
@@ -28,5 +28,9 @@ public class TideNetworkClient(string authToken) : ITideNetworkClient
 		}));
 
 		return response;
-	}        
+	}
+	public async Task<UnlockResponse> Unlock(UnlockOptions unlockOptions)
+	{
+		throw new NotImplementedException();
+	}
 }
