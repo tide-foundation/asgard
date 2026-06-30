@@ -1,8 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Ork.Clients;
+using Ork.Models;
 using System.Text;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
-using Tide.Asgard.Core.Cipher;
 using Tide.Asgard.Core.Policy;
 
 namespace Tide.Asgard.AspNetCore.Example.Controllers
@@ -10,10 +11,10 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 	[Authorize]
 	[ApiController]
 	[Route("[controller]")]
-	public class AccountController(ITokenExchangeService exchangeService, VendorPolicyCache policyCache, IConfiguration config) : ControllerBase
+	public class AccountController(ITokenExchangeService exchangeService, VendorPolicyCache policyCache, IConfiguration config, TideClientManagerProvider tideClientProvider) : ControllerBase
 	{
 		[HttpGet]
-		public async Task<IActionResult> EncryptAccount()
+		public async Task<IActionResult> EncryptAccount() 
 		{
 			// Get authorized tide client through token exchange of the user in this API context
 			var token = await exchangeService.ExchangeToken(
@@ -22,9 +23,9 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 				"account-agent"
 				);
 
+			policyCache.AddOptionalProviderAuthentication(token); // since the policies originate from tidecloak
 
-			var client = new TideNetworkClient(token);
-
+			var client = tideClientProvider.GetLockClientManager(token);
 
 			// set up encryption options
 			var lockOptions = new LockOptions
@@ -48,7 +49,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 			});
 
 			// encrypt using tide
-			var response = await client.Lock(lockOptions);
+			LockResponse response = await client.Lock(lockOptions);
 
 			// get the cipher from the encrypted response
 			var cipher = response.GetLockedItemById("id1").Cipher;

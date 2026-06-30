@@ -5,6 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 using Tide.Asgard.AspNetCore.Authentication;
 using Tide.Asgard.AspNetCore.DPoP;
 using Tide.Asgard.Core.Crypto.Ed25519;
+using Tide.Asgard.Core.Policy;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,6 +23,10 @@ builder.Services
 	//}); // any api protected by this authentication scheme above will require dpop proofs
 
 builder.Services.AddTokenExchange(builder.Configuration);
+
+builder.Services.AddAsgard(builder.Configuration.GetSection("Asgard"));
+
+builder.Services.AddScoped<IPolicyProvider, TidecloakPolicyProvider>();
 
 // add an abilitie to bind dashboard options from the configuration, but also allow us to set them here in code if we want to
 //builder.Services.AddAutoClientCeritificationToDashboard(dashboardOptionsFromConfig); // add auto rego abilities to this web app

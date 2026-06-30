@@ -7,6 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\..\..\project\ork\Ork.Clients\Ork.Clients.csproj" />
+    <ProjectReference Include="..\..\..\..\project\ork\Ork.Models\Ork.Models.csproj" />
     <ProjectReference Include="..\Tide.Asgard.AspNetCore.DPoP\Tide.Asgard.AspNetCore.DPoP.csproj" />
     <ProjectReference Include="..\Tide.Asgard.AspNetCore\Tide.Asgard.AspNetCore.Authentication.csproj" />
   </ItemGroup>

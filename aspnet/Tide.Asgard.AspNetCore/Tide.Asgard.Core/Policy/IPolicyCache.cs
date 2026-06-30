@@ -14,11 +14,33 @@ public interface IPolicyCache
 	/// <param name="id"></param>
 	Task<ReadOnlyMemory<byte>> UpdatePolicy(string id);
 	void RemovePolicy(string id);
+	void AddOptionalProviderAuthentication(string authentication);
 }
 
-public class DefaultPolicyCache(IPolicyProvider policyProvider) : IPolicyCache
+public abstract class BasePolicyCache : IPolicyCache
+{
+	protected IPolicyProvider PolicyProvider { get; }
+	public BasePolicyCache(IPolicyProvider policyProvider)
+	{
+		PolicyProvider = policyProvider;
+	}
+
+	public abstract Task<ReadOnlyMemory<byte>> GetPolicy(string id);
+	public abstract void RemovePolicy(string id);
+	public abstract Task<ReadOnlyMemory<byte>> UpdatePolicy(string id);
+	public void AddOptionalProviderAuthentication(string authentication)
+	{
+		PolicyProvider.SetAuthentication(authentication);
+	}
+}
+
+public class DefaultPolicyCache : BasePolicyCache
 {
 	private readonly ConcurrentDictionary<string, (ReadOnlyMemory<byte> policy, DateTime ttl)> _policies = new();
+
+	public DefaultPolicyCache(IPolicyProvider provider) : base(provider)
+	{
+	}
 
 	private void AddPolicy(string id, ReadOnlyMemory<byte> policy)
 	{
@@ -34,7 +56,7 @@ public class DefaultPolicyCache(IPolicyProvider policyProvider) : IPolicyCache
 		}
 	}
 
-	public async Task<ReadOnlyMemory<byte>> GetPolicy(string id)
+	public override async Task<ReadOnlyMemory<byte>> GetPolicy(string id)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(id, nameof(id));
 		if (_policies.TryGetValue(id, out var policy))
@@ -45,13 +67,13 @@ public class DefaultPolicyCache(IPolicyProvider policyProvider) : IPolicyCache
 		}
 
 		// try find policy from policy provider
-		var fetchedPolicy = await policyProvider.GetPolicy(id) ?? throw new InvalidOperationException("Could not find policy in cache or provider");
+		var fetchedPolicy = await PolicyProvider.GetPolicy(id) ?? throw new InvalidOperationException("Could not find policy in cache or provider");
 		AddPolicy(id, fetchedPolicy); // add to cache
 		return fetchedPolicy;
 	}
-	public async Task<ReadOnlyMemory<byte>> UpdatePolicy(string id)
+	public override async Task<ReadOnlyMemory<byte>> UpdatePolicy(string id)
 	{
-		ReadOnlyMemory<byte>? fetchedPolicy = await policyProvider.GetPolicy(id);
+		ReadOnlyMemory<byte>? fetchedPolicy = await PolicyProvider.GetPolicy(id);
 		if(fetchedPolicy == null)
 		{
 			// policy doesn't exist in provider anymore... we'll remove it from cache too
@@ -63,7 +85,7 @@ public class DefaultPolicyCache(IPolicyProvider policyProvider) : IPolicyCache
 		return fetchedPolicy.Value;
 	}
 
-	public void RemovePolicy(string id)
+	public override void RemovePolicy(string id)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(id, nameof(id));
 		_policies.TryRemove(id, out _);

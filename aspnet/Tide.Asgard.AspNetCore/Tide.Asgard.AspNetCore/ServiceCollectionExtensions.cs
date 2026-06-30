@@ -5,6 +5,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Ork.Clients;
 using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
@@ -116,6 +117,24 @@ public static class ServiceCollectionExtensions
 		ArgumentNullException.ThrowIfNull(configuration);
 
 		return AddTokenExchangeForClient(services, configuration.GetSection("Keycloak") ?? throw new InvalidOperationException("Missing required configuration section: Keycloak"));
+	}
+
+	public static IServiceCollection AddAsgard(
+		this IServiceCollection services,
+		IConfiguration asgardConfiguration
+		)
+	{
+		// add the tide client manager provider
+		var voucherUrl = asgardConfiguration["voucherUrl"] ?? throw new Exception("Voucher url is required for asgard");
+		var tideClientManagerProvider = new TideClientManagerProvider(
+			voucherUrl, 
+			asgardConfiguration["homeOrkUrl"], 
+			asgardConfiguration["networkThreshold"] == null ? null : int.Parse(asgardConfiguration["networkThreshold"]!), 
+			asgardConfiguration["deviceKeyLocation"]);
+
+		services.AddSingleton(tideClientManagerProvider);
+
+		return services;
 	}
 
 	//public static IServiceCollection AddAutoClientCeritificationToDashboard(

@@ -19,8 +19,13 @@ public class AppSettingsPolicyProvider(IConfiguration config) : IPolicyProvider
 		}
 		return Task.CompletedTask;
 	}
-	public IReadOnlyDictionary<string, ReadOnlyMemory<byte>> GetAllPolicies()
+	public async Task<IReadOnlyDictionary<string, ReadOnlyMemory<byte>>> GetAllPolicies()
 	{
 		return Policies.AsReadOnly();
+	}
+
+	public async Task<ReadOnlyMemory<byte>?> GetPolicy(string id)
+	{
+		return Policies[id];
 	}
 }

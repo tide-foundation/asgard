@@ -9,7 +9,6 @@ using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Tide.Asgard.Core.Cipher;
 using Tide.Asgard.Core.Policy;
 
 namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange
@@ -18,9 +17,8 @@ namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange
 	public interface ITokenExchangeService
 	{
 		Task<string> ExchangeToken(IHeaderDictionary headers, string requestingClientId, string requestedAudience);
-		Task<TideNetworkClient> ExchangeTokenForTideClient(IHeaderDictionary headers, string requestingClientId, string requestedAudience);
 	}
-	public class TokenExchangeService(IHttpClientFactory factory, IPolicyCache policyCache) : ITokenExchangeService
+	public class TokenExchangeService(IHttpClientFactory factory) : ITokenExchangeService
 	{
 		public async Task<string> ExchangeToken(IHeaderDictionary headers, string requestingClientId, string requestedAudience)
 		{
@@ -36,12 +34,6 @@ namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange
 				return await ExchangeDPoPToken(headers, requestingClientId, requestedAudience);
 			else
 				return await ExchangeAccessToken(headers, requestingClientId, requestedAudience);
-		}
-
-		public async Task<TideNetworkClient> ExchangeTokenForTideClient(IHeaderDictionary headers, string requestingClientId, string requestedAudience)
-		{
-			var authToken = await ExchangeToken(headers, requestingClientId, requestedAudience);
-			return new TideNetworkClient(authToken);
 		}
 
 		/// <summary>
