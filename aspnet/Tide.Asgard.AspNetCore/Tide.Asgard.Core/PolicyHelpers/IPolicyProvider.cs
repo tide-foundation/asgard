@@ -6,13 +6,14 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Tide.Asgard.Core.Policy;
+namespace Tide.Asgard.Core.PolicyHelpers;
 
 public interface IPolicyProvider
 {
 	Task<IReadOnlyDictionary<string, ReadOnlyMemory<byte>>> GetAllPolicies();
 	Task<ReadOnlyMemory<byte>?> GetPolicy(string id);
 	void SetAuthentication(string authentication);
+	Task AddPolicy(string id, ReadOnlyMemory<byte> policy);
 }
 
 /// <summary>
@@ -60,8 +61,8 @@ public class TidecloakPolicyProvider : IPolicyProvider
 		if (string.IsNullOrEmpty(TidecloakToken))
 			throw new InvalidOperationException("Authentication token not set. Call SetAuthentication first.");
 
-		// GET /admin/realms/{realm}/iga/role-policies  (authenticated-only, returns a JSON array)
-		var requestUri = $"{_baseUrl}/admin/realms/{Uri.EscapeDataString(_realm!)}/iga/role-policies";
+		// GET /realms/{realm}/tide-policy/all  (any authenticated realm user, returns a JSON array)
+		var requestUri = $"{_baseUrl}/realms/{Uri.EscapeDataString(_realm!)}/tide-policy/all";
 		using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
 
 		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", TidecloakToken);
@@ -71,21 +72,20 @@ public class TidecloakPolicyProvider : IPolicyProvider
 
 		using var stream = await response.Content.ReadAsStreamAsync();
 		var policies = await JsonSerializer
-			.DeserializeAsync<List<RolePolicyRepresentation>>(stream) ?? [];
+			.DeserializeAsync<List<TidePolicyRepresentation>>(stream) ?? [];
 
 		var result = new Dictionary<string, ReadOnlyMemory<byte>>(policies.Count);
 		foreach (var policy in policies)
 		{
-			// the "name" key is the policy ID; skip malformed rows defensively
-			if (string.IsNullOrEmpty(policy.Name) || string.IsNullOrEmpty(policy.Policy))
+			// "id" is the policy ID; skip malformed rows defensively
+			if (string.IsNullOrEmpty(policy.Id) || string.IsNullOrEmpty(policy.Data))
 				continue;
 
-			// "policy" field is Base64 of the serialized Policy bytes
-			result[policy.Name] = Convert.FromBase64String(policy.Policy);
+			// "data" is Base64 of the serialized Policy bytes
+			result[policy.Id] = Convert.FromBase64String(policy.Data);
 		}
 
 		return result;
-
 	}
 
 	public async Task<ReadOnlyMemory<byte>?> GetPolicy(string id)
@@ -95,7 +95,7 @@ public class TidecloakPolicyProvider : IPolicyProvider
 			throw new InvalidOperationException("Authentication token not set. Call SetAuthentication first.");
 
 		// GET /admin/realms/{realm}/iga/role-policies/name/{name}  (authenticated-only)
-		var requestUri = $"{_baseUrl}/admin/realms/{Uri.EscapeDataString(_realm!)}/iga/role-policies/name/{Uri.EscapeDataString(id)}";
+		var requestUri = $"{_baseUrl}/realms/{Uri.EscapeDataString(_realm!)}/tide-policy/find/{Uri.EscapeDataString(id)}";
 		using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
 
 		// add tidecloak token to the authorization header
@@ -111,22 +111,76 @@ public class TidecloakPolicyProvider : IPolicyProvider
 
 		using var stream = await response.Content.ReadAsStreamAsync();
 		var policy = await JsonSerializer
-			.DeserializeAsync<RolePolicyRepresentation>(stream);
+			.DeserializeAsync<TidePolicyRepresentation>(stream);
 
 		// "policy" field is Base64 of the serialized Policy bytes
-		if (string.IsNullOrEmpty(policy?.Policy))
+		if (string.IsNullOrEmpty(policy?.Data))
 			return null;
 
-		return Convert.FromBase64String(policy.Policy);
+		return Convert.FromBase64String(policy.Data);
+	}
+
+	public async Task AddPolicy(string id, ReadOnlyMemory<byte> policy)
+	{
+		var changeRequestId = await AddPolicyWithChangeRequest(id, policy);
+		if(changeRequestId != null) throw new Exception("Policy was not added directly, a change request was created instead. Change Request ID: " + changeRequestId);
+	}
+	public async Task<string?> AddPolicyWithChangeRequest(string id, ReadOnlyMemory<byte> policy)
+	{
+		if (string.IsNullOrEmpty(id)) throw new ArgumentNullException(nameof(id));
+		if (string.IsNullOrEmpty(TidecloakToken))
+			throw new InvalidOperationException("Authentication token not set. Call SetAuthentication first.");
+
+		// POST /realms/{realm}/tide-policy/add  (any authenticated realm user)
+		// form fields: id = policy id, data = Base64 of the serialized Policy bytes
+		var requestUri = $"{_baseUrl}/realms/{Uri.EscapeDataString(_realm!)}/tide-policy/add";
+
+		using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
+		{
+			Content = new FormUrlEncodedContent(new[]
+			{
+				new KeyValuePair<string, string>("id", id),
+				new KeyValuePair<string, string>("data", Convert.ToBase64String(policy.Span)),
+			}),
+		};
+
+		// add tidecloak token to the authorization header
+		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", TidecloakToken);
+
+		using var response = await _httpClient.SendAsync(request);
+		response.EnsureSuccessStatusCode();
+
+		using var stream = await response.Content.ReadAsStreamAsync();
+		var result = await JsonSerializer
+			.DeserializeAsync<AddPolicyResponse>(stream);
+
+		// IGA on  -> body has "changeRequestId" (pending approval)
+		// IGA off -> body has only "id" (written directly); no CR, so null
+		return result?.ChangeRequestId;
 	}
 }
-internal sealed class RolePolicyRepresentation
+internal sealed class TidePolicyRepresentation
 {
-	[JsonPropertyName("name")]
-	public string? Name { get; set; }
+	[JsonPropertyName("id")]
+	public string? Id { get; set; }
 
-	[JsonPropertyName("policy")]
-	public string? Policy { get; set; }
+	[JsonPropertyName("data")]
+	public string? Data { get; set; }   // Base64 of the serialized Policy bytes
+
+	[JsonPropertyName("realmId")]
+	public string? RealmId { get; set; }
+
+	[JsonPropertyName("createdAt")]
+	public long? CreatedAt { get; set; }
+
+	[JsonPropertyName("notes")]
+	public string? Notes { get; set; }
 }
+internal sealed class AddPolicyResponse
+{
+	[JsonPropertyName("changeRequestId")]
+	public string? ChangeRequestId { get; set; }
 
-// assume a TidecloakPolicyProvider will be created -> stores policies on tidecloak
+	[JsonPropertyName("id")]
+	public string? Id { get; set; }
+}

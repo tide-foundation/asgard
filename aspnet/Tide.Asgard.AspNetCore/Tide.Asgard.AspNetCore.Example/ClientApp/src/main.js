@@ -6,6 +6,7 @@ const statusEl = $("auth-status");
 const userInfoEl = $("user-info");
 const resultEl = $("result");
 const btnLogin = $("btn-login");
+const btnPolicySetup = $("btn-policy-setup");
 const btnLogout = $("btn-logout");
 const btnCallApi = $("btn-call-api");
 
@@ -24,6 +25,7 @@ function showAuthenticated(kc) {
   btnLogin.style.display = "none";
   btnLogout.style.display = "inline-block";
   btnCallApi.style.display = "inline-block";
+  btnPolicySetup.style.display = "inline-block";
 }
 
 function showUnauthenticated() {
@@ -33,6 +35,16 @@ function showUnauthenticated() {
   btnLogin.style.display = "inline-block";
   btnLogout.style.display = "none";
   btnCallApi.style.display = "none";
+  btnPolicySetup.style.display = "none";
+}
+
+async function setupPolicy(kc) {
+    log("Setting up policy...");
+
+    // should tidecloak have a functionality to create a policy?
+    // else we'll need to use tide-js
+
+
 }
 
 async function callHelloEndpoint(kc) {

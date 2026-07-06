@@ -6,12 +6,14 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Ork.Clients;
+using Ork.Clients.Providers;
 using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
-using Tide.Asgard.Core.Policy;
+using Tide.Asgard.Core;
+using Tide.Asgard.Core.PolicyHelpers;
 
 namespace Tide.Asgard.AspNetCore.Authentication;
 
@@ -98,7 +100,8 @@ public static class ServiceCollectionExtensions
 			client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 		});
 
-		services.TryAddSingleton<ITokenExchangeService, TokenExchangeService>();
+		services.TryAddScoped<ITokenExchangeService, TokenExchangeService>();
+		services.AddHttpContextAccessor();
 
 		return services;
 	}
@@ -119,20 +122,57 @@ public static class ServiceCollectionExtensions
 		return AddTokenExchangeForClient(services, configuration.GetSection("Keycloak") ?? throw new InvalidOperationException("Missing required configuration section: Keycloak"));
 	}
 
+	/// <summary>
+	/// Default implementation of Asgard registration. Uses a FileDeviceKeyProvider to store the device key in a file.
+	/// </summary>
+	/// <param name="services"></param>
+	/// <param name="asgardConfiguration"></param>
+	/// <returns></returns>
 	public static IServiceCollection AddAsgard(
 		this IServiceCollection services,
 		IConfiguration asgardConfiguration
 		)
 	{
+		return AddAsgard(services, asgardConfiguration, new FileDeviceKeyProvider());
+	}
+	/// <summary>
+	/// Default implementation of Asgard registration. Uses the provided IDeviceKeyProvider to store the device key.
+	/// </summary>
+	/// <param name="services"></param>
+	/// <param name="asgardConfiguration"></param>
+	/// <param name="deviceKeyProvider"></param>
+	/// <returns></returns>
+	/// <exception cref="Exception"></exception>
+	public static IServiceCollection AddAsgard(
+		this IServiceCollection services,
+		IConfiguration asgardConfiguration,
+		IDeviceKeyProvider deviceKeyProvider
+		)
+	{
 		// add the tide client manager provider
 		var voucherUrl = asgardConfiguration["voucherUrl"] ?? throw new Exception("Voucher url is required for asgard");
 		var tideClientManagerProvider = new TideClientManagerProvider(
-			voucherUrl, 
-			asgardConfiguration["homeOrkUrl"], 
-			asgardConfiguration["networkThreshold"] == null ? null : int.Parse(asgardConfiguration["networkThreshold"]!), 
-			asgardConfiguration["deviceKeyLocation"]);
-
+			voucherUrl,
+			deviceKeyProvider,
+			asgardConfiguration["homeOrkUrl"],
+			asgardConfiguration["networkThreshold"] == null ? null : int.Parse(asgardConfiguration["networkThreshold"]!)
+			);
 		services.AddSingleton(tideClientManagerProvider);
+
+		// add http context accessor
+		services.AddHttpContextAccessor();
+
+		// add token exchange service
+		services.TryAddSingleton<ITokenExchangeService, TokenExchangeService>();
+
+		// add default cache service
+		services.AddScoped<IAsgardCache, AspDefaultAsgardCache>();
+
+		// add default tidecloak policy provider
+		services.AddScoped<IPolicyProvider, TidecloakPolicyProvider>();
+
+		// add asgard service
+		services.AddScoped<IAsgardService, AspAsgardService>();
 
 		return services;
 	}
