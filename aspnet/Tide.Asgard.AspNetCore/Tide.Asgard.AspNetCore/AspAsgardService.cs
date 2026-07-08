@@ -14,12 +14,15 @@ public class AspAsgardService(
 	TideClientManagerProvider tideClientManagerProvider,
 	IAsgardCache asgardCache,
 	IHttpContextAccessor httpContextAccessor,
-	ITokenExchangeService tokenExchangeService
-	) : IAsgardService
+	ITokenExchangeService tokenExchangeService,
+	IHttpClientFactory httpClientFactory
+	) : IAspAsgardService
 {
 	public ILockContext CreateLockContext(LockOptions lockOptions)
 	{
 		var context = new AspLockContext(asgardCache, tideClientManagerProvider, lockOptions, httpContextAccessor, tokenExchangeService);
 		return context;
 	}
+
+	public HttpClient GetHttpClient() => httpClientFactory.CreateClient("Asgard");
 }

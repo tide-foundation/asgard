@@ -26,6 +26,8 @@ builder.Services.AddAsgard(builder.Configuration.GetSection("Asgard"));
 
 var app = builder.Build();
 
+app.UseExceptionHandler();
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 

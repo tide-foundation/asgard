@@ -11,6 +11,7 @@ using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using Tide.Asgard.AspNetCore.Authentication.Middleware;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 using Tide.Asgard.Core;
 using Tide.Asgard.Core.PolicyHelpers;
@@ -172,7 +173,15 @@ public static class ServiceCollectionExtensions
 		services.AddScoped<IPolicyProvider, TidecloakPolicyProvider>();
 
 		// add asgard service
-		services.AddScoped<IAsgardService, AspAsgardService>();
+		services.AddScoped<IAspAsgardService, AspAsgardService>();
+
+		// add asgrd exception handler
+		services.AddExceptionHandler<AsgardExceptionHandler>();
+
+		// add asgard request handler
+		services.AddTransient<AsgardMessageHandler>();
+		services.AddHttpClient("Asgard")
+			.AddHttpMessageHandler<AsgardMessageHandler>();
 
 		return services;
 	}

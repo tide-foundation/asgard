@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Ork.Clients;
 using Ork.Models;
 using System.Text;
+using Tide.Asgard.AspNetCore.Authentication;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 using Tide.Asgard.Core;
 using Tide.Asgard.Core.PolicyHelpers;
@@ -12,7 +13,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 	[Authorize]
 	[ApiController]
 	[Route("[controller]")]
-	public class AccountController(IAsgardService asgardService) : ControllerBase
+	public class AccountController(IAspAsgardService asgardService) : ControllerBase
 	{
 		[HttpGet]
 		public async Task<IActionResult> EncryptAccount() 
@@ -42,6 +43,10 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 			var cipher2 = response.GetLockedItemById("id2").Cipher;
 
 			var cipherButDifferentFetch = response.LockedItems.First().Cipher;
+
+			// if i want to contact another asgard enabled service
+			var client = asgardService.GetHttpClient();
+			await client.GetAsync("");
 
 			return Ok(cipher);
 		}

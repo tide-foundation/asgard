@@ -142,12 +142,12 @@ throw new NotImplementedException();
 			var context = GetHttpContext();
 
 			var headers = context.Request.Headers;
-			if(headers == null || !headers.TryGetValue("Application_Doken", out var applicationDoken) || !headers.TryGetValue("User_Doken", out var userDoken))
+			if(headers == null || !headers.TryGetValue("Application-Doken", out var applicationDoken) || !headers.TryGetValue("User-Doken", out var userDoken))
 			{
-				// Write to response headers the fields we need to exchange the doken for an application doken
-				var requestHeaders = context.Request.Headers;
-				requestHeaders.Append("Tide_Exception", "Doken Requested");
-				requestHeaders.Append("Application_Key", "SRK Cert in base64");
+				throw new AsgardException(AsgardErrorCode.DokenNotFound, headers =>
+				{
+					headers["Application-Key"] = Base64UrlEncoder.Encode(deviceKeyProvider.GetDeviceKey().GetPublic().ToJwk()); // maybe it's better to return a standard serialized (not SerializedComponent)
+				});
 			}
 
 

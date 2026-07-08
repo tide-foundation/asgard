@@ -8,19 +8,25 @@ using Tide.Asgard.Core;
 
 namespace Tide.Asgard.AspNetCore.Authentication.Middleware;
 
-public class AsgardExceptionHandler(IDeviceKeyProvider deviceKeyProvider) : IExceptionHandler
+/// <summary>
+/// You must execute app.UseExceptionHandler() in the app pipleline
+/// </summary>
+public class AsgardExceptionHandler : IExceptionHandler
 {
-	public async ValueTask<bool> TryHandleAsync(
+	public ValueTask<bool> TryHandleAsync(
 			HttpContext httpContext,
 			Exception exception,
 			CancellationToken cancellationToken)
 	{
 		if (exception is not AsgardException ex)
-			return false; // not ours — let the next handler / default deal with it
+			return ValueTask.FromResult(false); // not ours — let the next handler / default deal with it
 
-		httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
-		httpContext.Response.Headers.Append("Tide_Exception", "Doken Requested");
-		httpContext.Response.Headers.Append("Application_Key", await deviceKeyProvider.GetDeviceKeyAsString());
-		return true; 
+		httpContext.Response.StatusCode = ex.HttpErrorCode;
+		httpContext.Response.Headers["Asgard-Exception"] = ex.Code.ToString();
+		foreach((var headerName, var headerValue) in ex.ResponseHeaders)
+		{
+			httpContext.Response.Headers[headerName] = headerValue;
+		}
+		return ValueTask.FromResult(true); 
 	}
 }
