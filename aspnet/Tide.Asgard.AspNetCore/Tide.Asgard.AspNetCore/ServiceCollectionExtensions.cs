@@ -190,28 +190,4 @@ public static class ServiceCollectionExtensions
 
 		return services;
 	}
-
-	//public static IServiceCollection AddAutoClientCeritificationToDashboard(
-	//	this IServiceCollection services,	
-	//	TidecloakDashboardOptions dashboardOptions
-	//	)
-	//{
-
-	//	ArgumentNullException.ThrowIfNull(services);
-	//	ArgumentNullException.ThrowIfNull(dashboardOptions);
-
-	//	services.AddControllers()
-	//		.AddApplicationPart(System.Reflection.Assembly.GetExecutingAssembly());
-
-	//	services.AddKeycloakAuthorization();
-
-	//	services.AddAuthorizationBuilder()
-	//		.AddPolicy(TidecloakDashboardAuthenticationSchemes.ClientCertificationPolicy, builder =>
-	//		{
-	//			builder.AuthenticationSchemes = dashboardOptions.AllowedClientCertificationAuthenticationSchemes;
-	//			builder.RequireResourceRolesForClient(dashboardOptions.DashboardClientName, dashboardOptions.AllowedClientCertificationRoles);
-	//		});
-
-	//	return services;
-	//}
 }

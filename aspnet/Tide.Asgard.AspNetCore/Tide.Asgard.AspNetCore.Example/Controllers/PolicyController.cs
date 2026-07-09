@@ -8,7 +8,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 		[HttpGet("Create")]
 		public async Task<IActionResult> Create()
 		{
-			var policyBuiler = new PolicyBuilder(config["vendorId"]!, "");
+			var policyBuiler = new PolicyBuilder(config["vendorId"]!, "contract id 123");
 
 			policyBuiler.AllowPublicUse();
 			policyBuiler.BypassExplicitUserConsent();
