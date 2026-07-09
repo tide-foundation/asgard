@@ -140,23 +140,28 @@ public static class ServiceCollectionExtensions
 	/// Default implementation of Asgard registration. Uses the provided IDeviceKeyProvider to store the device key.
 	/// </summary>
 	/// <param name="services"></param>
-	/// <param name="asgardConfiguration"></param>
+	/// <param name="config"></param>
 	/// <param name="deviceKeyProvider"></param>
 	/// <returns></returns>
 	/// <exception cref="Exception"></exception>
 	public static IServiceCollection AddAsgard(
 		this IServiceCollection services,
-		IConfiguration asgardConfiguration,
+		IConfiguration config,
 		IDeviceKeyProvider deviceKeyProvider
 		)
 	{
-		// add the tide client manager provider
-		var voucherUrl = asgardConfiguration["voucherUrl"] ?? throw new Exception("Voucher url is required for asgard");
+		// add the tide client manager provider		
+		var configurationSection = config.GetSection("Keycloak") ?? throw new InvalidOperationException("Missing required configuration section: Keycloak");
+
+		string realm = configurationSection["realm"] ?? throw new InvalidOperationException("Missing required configuration: realm");
+		string tidecloakDomain = configurationSection["auth-server-url"] ?? throw new InvalidOperationException("Missing required configuration: auth-server-url");
+		string baseRealmUrl = new Uri(tidecloakDomain).GetLeftPart(UriPartial.Authority) + $"/realms/{realm}/";
+
 		var tideClientManagerProvider = new TideClientManagerProvider(
-			voucherUrl,
+			baseRealmUrl,
 			deviceKeyProvider,
-			asgardConfiguration["homeOrkUrl"],
-			asgardConfiguration["networkThreshold"] == null ? null : int.Parse(asgardConfiguration["networkThreshold"]!)
+			config["homeOrkUrl"],
+			config["networkThreshold"] == null ? null : int.Parse(config["networkThreshold"]!)
 			);
 		services.AddSingleton(tideClientManagerProvider);
 

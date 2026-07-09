@@ -22,7 +22,7 @@ builder.Services
 	//	opts.Mode = DPoPModes.Required;
 	//}); // any api protected by this authentication scheme above will require dpop proofs
 
-builder.Services.AddAsgard(builder.Configuration.GetSection("Asgard"));
+builder.Services.AddAsgard(builder.Configuration);
 
 var app = builder.Build();
 

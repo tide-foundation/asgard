@@ -1,6 +1,6 @@
 # Asgard
 
-Asgard is a .NET authentication SDK that extends `Keycloak.AuthServices` with Tide-specific cryptography (Ed25519 signing keys) and an opinionated OAuth 2.0 Token Exchange client. It is designed to work with **Tidecloak** — Tide's distribution of Keycloak — so your ASP.NET Core APIs can validate tokens issued by a Tidecloak realm and exchange them between clients.
+Asgard is a .NET authentication SDK that extends `Keycloak.AuthServices` with Tide-specific capabilities and an OAuth 2.0 Token Exchange service. It is designed to work with **Tidecloak** — Tide's distribution of Keycloak — so your ASP.NET Core APIs can validate tokens issued by a Tidecloak realm, perform key-less locking (encryption) of data under Tide policies, and exchange tokens between clients.
 
 The fastest way to see it working end-to-end is the [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) project — the snippets below mirror its setup.
 
@@ -9,111 +9,55 @@ The fastest way to see it working end-to-end is the [Tide.Asgard.AspNetCore.Exam
 - .NET 10 SDK
 - A running Tidecloak instance with a configured realm and licence
 
-## Repository layout
-
-The .NET solution lives at [aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln) and contains:
-
-| Project | Purpose |
-|---|---|
-| [Tide.Asgard.AspNetCore.Authentication](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/) | Main SDK — service-collection extensions, Ed25519 helpers, token exchange |
-| [Tide.Asgard.Core](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/) | Cryptography primitives (Ed25519 / EdDSA) |
-| [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) | End-to-end working sample |
-
-The SDK is currently consumed via `<ProjectReference>` — see [Tide.Asgard.AspNetCore.Example.csproj](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/Tide.Asgard.AspNetCore.Example.csproj) for the wiring.
-
-## How to add Asgard .NET Authentication to your web app
-
-### 1. Set up your Tidecloak clients
-
-A typical setup uses two clients in your realm:
+To avoid re-documenting Keycloak-specific setup, this guide assumes your realm already has:
 
 - A **public client** for the browser-side login page (e.g. `browser-login-page`)
 - A **confidential client** for your .NET backend (e.g. `backend`)
 
-You can add more backend clients later if you want to separate, say, admin endpoints from user endpoints.
+**The public client must include an audience mapper for the backend client**, so any token issued to the public client can be read by the backend client.
 
-> **Note:** if you're using Tide for user authentication, create your licence in your realm before creating any clients.
+## 1. Add the adapter config to your app
 
-#### Create the browser client
-
-In your realm -> Clients -> Create client:
-- Client ID: `browser-login-page`
-- Set the redirect URIs and web origins for your login page
-- Save
-
-#### Create the backend client
-
-In your realm -> Clients -> Create client:
-- Client ID: `backend`
-- Enable **Client authentication**
-- Enable **Standard Token Exchange** (required for step 4)
-- Set the web origins
-- Save
-
-Then open the **Credentials** tab and ensure **Client Authenticator** is set to *Client ID and Secret*.
-
-#### Add an audience mapper to the browser client
-
-For the backend to accept tokens issued by `browser-login-page`, those tokens need `backend` in their `aud` claim.
-
-In your realm -> Clients -> `browser-login-page` -> Client scopes -> `browser-login-page-dedicated` -> Add mapper -> By configuration -> Audience:
-- Name: `backend-mapper`
-- Included Client Audience: `backend`
-- Save
-
-### 2. Add the adapter config to your app
-
-Each Tidecloak client exposes an **adapter config** — a JSON blob describing how an SDK should talk to it. The asgard SDK reads the backend client's adapter config from `appsettings.json`.
-
-> If you're also using tidecloak-js on the browser side, download its adapter config separately and follow the tidecloak-js instructions for installing it.
+Each Tidecloak client exposes an **adapter config** — a JSON blob describing how an SDK should talk to it. Asgard reads the backend client's adapter config from `appsettings.json`.
 
 **Download it:** in your realm -> Clients -> `backend` -> top-right **Action** dropdown -> **Download adapter config**, then copy the JSON.
 
-**Paste it into `appsettings.json`** under a `Keycloak` key. The nesting is required because `Keycloak.AuthServices` reads its configuration from the `Keycloak` section by default.
+**Paste it into `appsettings.json`** under a `Keycloak` section. The nesting is required because `Keycloak.AuthServices` reads its configuration from the `Keycloak` section by default.
 
-Example:
 ```json
 {
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Keycloak.AuthServices": "Debug"
-    }
-  },
-  "AllowedHosts": "*",
-
   "Keycloak": {
     "realm": "test",
     "auth-server-url": "http://localhost:8080",
     "ssl-required": "external",
     "resource": "backend",
     "credentials": {
-        "secret": "dXrEdnwK5nXYa9QdRkQY8mxpBoj5G8TP"
+      "secret": "<client secret>"
     },
-    "confidential-port": 0,
     "jwk": {
-        "keys": [
+      "keys": [
         {
-            "kid": "lQfpu9UmEbiORUienjTlbxiV5teMVbT1neXjEGgd8V4",
-            "kty": "OKP",
-            "alg": "EdDSA",
-            "use": "sig",
-            "crv": "Ed25519",
-            "x": "HcYJ2a_4pi-9g5_aVbE4_gZoPIXTlg6IQw-jiuFuifk"
+          "kid": "...",
+          "kty": "OKP",
+          "alg": "EdDSA",
+          "use": "sig",
+          "crv": "Ed25519",
+          "x": "..."
         }
-        ]
-    },
-    "backgroundUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/BACKGROUND_IMAGE",
-    "logoUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/LOGO",
-    "homeOrkUrl": "http://localhost:1001"
+      ]
+    }
   }
 }
 ```
-### 3. Adding the Asgard SDK to your .NET Web Application
-Asgard currently works alongside `Keycloak.AuthServices` to provide:
-- Ed25519 Signing Key Support
 
-Register authentication in `Program.cs`:
+> If you're also using tidecloak-js on the browser side, download its adapter config separately and follow the tidecloak-js instructions for installing it.
+
+## 2. Register authentication and Asgard
+
+Tidecloak signs tokens with EdDSA (Ed25519), which .NET does not support natively. Asgard fills the gap: `GetEd25519IssuerKey` reads the Ed25519 JWK from the `Keycloak` config section and returns a key you can plug into the standard `Keycloak.AuthServices` setup.
+
+`Program.cs`:
+
 ```csharp
 using Keycloak.AuthServices.Authentication;
 using Tide.Asgard.AspNetCore.Authentication;
@@ -122,52 +66,120 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 
+// Validate Tidecloak-issued EdDSA tokens
 builder.Services
-	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
-	{
-		options.RequireHttpsMetadata = false;
-		options.TokenValidationParameters.IssuerSigningKey = Utils.GetEd25519IssuerKey(builder.Configuration);
-	});
+    .AddKeycloakWebApiAuthentication(builder.Configuration, options =>
+    {
+        options.RequireHttpsMetadata = false; // local dev only
+        options.TokenValidationParameters.IssuerSigningKey = builder.Configuration.GetEd25519IssuerKey();
+    });
+
+// Tide locking, policies and token exchange
+builder.Services.AddAsgard(builder.Configuration);
 
 var app = builder.Build();
+
+app.UseExceptionHandler(); // required — Asgard registers an exception handler that relies on it
 
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
 app.Run();
 ```
 
-Protect endpoints with `[Authorize]`:
+`AddAsgard` registers everything the rest of this guide uses: the `IAspAsgardService` for locking, a policy provider/cache backed by Tidecloak, the token exchange service, and an exception handler that translates Asgard errors into `Asgard-*` response headers (which is why `app.UseExceptionHandler()` is required).
+
+Authentication and authorization themselves (attributes, policies, role mapping) are handled by `Keycloak.AuthServices` — see its docs for anything beyond the setup above.
+
+## 3. Lock data with a policy
+
+Asgard lets you perform **key-less locking** (encryption) of data using only the caller's token and an application policy — no key material is stored by your app.
+
+Inject `IAspAsgardService`, describe the items to lock, and choose a policy:
+
 ```csharp
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Ork.Models;
+using System.Text;
+using Tide.Asgard.AspNetCore.Authentication;
 
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class HelloController : ControllerBase
+public class AccountController(IAspAsgardService asgardService) : ControllerBase
 {
-	[HttpGet]
-	public IActionResult Get() => Ok($"Hello, {User.Identity?.Name}");
+    [HttpGet]
+    public async Task<IActionResult> EncryptAccount()
+    {
+        var lockOptions = new LockOptions()
+            .AddItemToLock(new ItemToLock
+            {
+                ItemId = "id1",
+                Tags = ["staff data", "date of birth"],
+                Data = Encoding.UTF8.GetBytes("hello!"),
+            });
+
+        LockResponse response = await asgardService.CreateLockContext(lockOptions)
+            .UsePolicy("vendor:user1:assessment1:policy1")
+            .Lock();
+
+        // grab the resulting ciphers
+        var cipher = response.GetLockedItemById("id1").Cipher;
+        // or: response.LockedItems.First().Cipher;
+
+        return Ok(cipher);
+    }
 }
 ```
 
-For more information on authentication - see `Keycloak.AuthServices`. That is the package that directly manages the authentication / authorization.
+`Lock()` fetches the policy from Tidecloak (authenticated as the calling user, then cached), exchanges the caller's token for an application token, and asks the Tide network to lock the data under that policy.
 
-### 4. (Optional) Configuring Token Exchange Service
+Key-less **unlocking** and **signing** contexts are coming soon.
+
+### Calling other Asgard-enabled services
+
+When your API calls another Asgard-enabled service, use the HTTP client from `asgardService.GetHttpClient()`. It forwards `Asgard-*` headers on requests and surfaces Asgard errors from downstream responses as `AsgardException`s, so error flows work across service boundaries.
+
+```csharp
+var client = asgardService.GetHttpClient();
+await client.GetAsync("https://other-asgard-service/...");
+```
+
+## 4. Create policies
+
+Policies define what a lock/unlock operation is allowed to do and who has to consent to it. Build one with `PolicyBuilder` and register it in Tidecloak:
+
+```csharp
+using Tide.Asgard.Core.PolicyHelpers;
+
+var policyBuilder = new PolicyBuilder(vendorId, contractId);
+
+policyBuilder.AllowPublicUse();
+policyBuilder.BypassExplicitUserConsent();
+policyBuilder.UseForEncyption();
+
+var changeRequestId = await policyProvider.AddPolicyWithChangeRequest("example-policy", policyBuilder.BuildPolicy());
+```
+
+Adding a policy creates a **change request** in Tidecloak that must be approved (via IGA) before the policy can be used.
+
+## 5. (Optional) Token exchange
+
 OAuth 2.0 Token Exchange lets your service swap an incoming user token for a new token targeting a different audience — useful when your API needs to call another protected service on behalf of the caller.
 
 Register the service:
-```csharp
-using Tide.Asgard.AspNetCore.Authentication;
 
+```csharp
 builder.Services.AddTokenExchange(builder.Configuration);
 ```
 
-`AddTokenExchange` also has an overload taking an `IConfigurationSection`, so you can register multiple token-exchange clients in the same app by passing different sections.
+`AddTokenExchange` reads the `Keycloak` section. To register token exchange for multiple clients in the same app, call `AddTokenExchangeForClient(IConfigurationSection)` with a different section per client.
 
-Inject `ITokenExchangeService` and call `ExchangeToken`:
+Inject `ITokenExchangeService` and call `ExchangeToken` — it picks up the caller's token from the current HTTP context:
+
 ```csharp
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -178,18 +190,31 @@ using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 [Route("[controller]")]
 public class HelloController(ITokenExchangeService exchangeService) : ControllerBase
 {
-	[HttpGet]
-	public async Task<IActionResult> Get()
-	{
-		var token = await exchangeService.ExchangeToken(
-			HttpContext.Request.Headers,
-			requestingClientId: "backend",
-			requestedAudience: "account");
+    [HttpGet]
+    public async Task<IActionResult> Get()
+    {
+        var token = await exchangeService.ExchangeToken(
+            requestingClientId: "backend",
+            requestedAudience: "account");
 
-		return Ok(token);
-	}
+        return Ok(token);
+    }
 }
 ```
+
+## Repository layout
+
+The .NET solution lives at [aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln) and contains:
+
+| Project | Purpose |
+|---|---|
+| [Tide.Asgard.AspNetCore.Authentication](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/) | Main SDK — service-collection extensions, Ed25519 helpers, locking, token exchange |
+| [Tide.Asgard.Core](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/) | Cryptography primitives (Ed25519 / EdDSA), policy helpers |
+| [Tide.Asgard.AspNetCore.DPoP](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.DPoP/) | DPoP (proof-of-possession) support — work in progress |
+| [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) | End-to-end working sample |
+
+The SDK is currently consumed via `<ProjectReference>` — see [Tide.Asgard.AspNetCore.Example.csproj](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/Tide.Asgard.AspNetCore.Example.csproj) for the wiring.
+
 
 ## License
 
