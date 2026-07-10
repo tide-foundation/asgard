@@ -134,11 +134,6 @@ throw new NotImplementedException();
 		/// <returns></returns>
 		public async Task<string> ExchangeTideDokenForApplicationDoken()
 		{
-			/**
-			 * Agent -> ClientA: 401 (Unauthorized) + Headers
-	-> Tide_Exception: Doken Requested
-	-> Application_Key: (SRK Cert in base64)
-			 * */
 			var context = GetHttpContext();
 
 			var headers = context.Request.Headers;
@@ -176,7 +171,7 @@ throw new NotImplementedException();
 			if (!headerValue.StartsWith("Doken ", StringComparison.OrdinalIgnoreCase))
 				throw new UnauthorizedAccessException("Authorization header is not a Tide Doken.");
 
-			var userDoken = headerValue["Doken ".Length..].Trim();
+			//var userDoken = headerValue["Doken ".Length..].Trim();
 
 
 

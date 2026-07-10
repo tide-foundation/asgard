@@ -15,14 +15,17 @@ builder.Services
 	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
 	{
 		options.RequireHttpsMetadata = false;
-		//options.TokenValidationParameters.IssuerSigningKey = Utils.GetEd25519IssuerKey(builder.Configuration);
+		options.TokenValidationParameters.IssuerSigningKey = Utils.GetEd25519IssuerKey(builder.Configuration);
+	})
+	.WithDPoP(opts =>
+	{
+		opts.Mode = DPoPModes.Required;
 	});
-	//.WithDPoP(opts =>
-	//{
-	//	opts.Mode = DPoPModes.Required;
-	//}); // any api protected by this authentication scheme above will require dpop proofs
+
 
 builder.Services.AddAsgard(builder.Configuration);
+builder.Services.AddScoped<TidecloakPolicyProvider>();
+builder.Services.AddProblemDetails();
 
 var app = builder.Build();
 
@@ -33,7 +36,7 @@ app.UseStaticFiles();
 
 
 // they must do this for the single public client users use to log into the application
-//app.UseTideSecuredDPoP(builder.Configuration, "spa_client");
+app.UseTideSecuredDPoP(builder.Configuration, "asgard-front");
 
 app.UseAuthentication();
 app.UseAuthorization();

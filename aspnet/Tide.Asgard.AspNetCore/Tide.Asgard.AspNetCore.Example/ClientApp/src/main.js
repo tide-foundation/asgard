@@ -6,7 +6,7 @@ const statusEl = $("auth-status");
 const userInfoEl = $("user-info");
 const resultEl = $("result");
 const btnLogin = $("btn-login");
-const btnPolicySetup = $("btn-policy-setup");
+const btnPolicySetup = $("btn-setup-policy");
 const btnLogout = $("btn-logout");
 const btnCallApi = $("btn-call-api");
 
@@ -41,10 +41,15 @@ function showUnauthenticated() {
 async function setupPolicy(kc) {
     log("Setting up policy...");
 
-    // should tidecloak have a functionality to create a policy?
-    // else we'll need to use tide-js
+    const response = await kc.secureFetch('http://localhost:3000/policy/create', {
+        headers: {
+            Authorization: `Bearer ${kc.token}`,
+        },
+    });
 
-
+    const status = response.status;
+    const text = await response.text();
+    log(text);
 }
 
 async function callHelloEndpoint(kc) {
@@ -88,6 +93,7 @@ async function init() {
   btnLogin.addEventListener("click", () => kc.login());
   btnLogout.addEventListener("click", () => kc.logout());
   btnCallApi.addEventListener("click", () => callHelloEndpoint(kc));
+  btnPolicySetup.addEventListener("click", () => setupPolicy(kc));
 
   kc.onTokenExpired = () => {
     log("Token expired, attempting refresh...");
@@ -105,7 +111,7 @@ async function init() {
     const authenticated = await kc.init({
       onLoad: "login-required",
       checkLoginIframe: false,
-     // useDPoP: { mode: "strict", alg: "EdDSA" },
+      useDPoP: { mode: "strict", alg: "EdDSA" },
     });
 
     if (authenticated) {

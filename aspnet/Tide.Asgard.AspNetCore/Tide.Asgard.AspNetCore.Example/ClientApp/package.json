@@ -7,7 +7,7 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@tidecloak/js": "~/tidecloak-js/packages/tidecloak-js"
+    "@tidecloak/js": "0.13.33"
   },
   "devDependencies": {
     "vite": "^6.0.0"

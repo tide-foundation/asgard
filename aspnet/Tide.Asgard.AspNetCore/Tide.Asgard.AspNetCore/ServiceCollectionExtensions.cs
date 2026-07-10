@@ -183,6 +183,9 @@ public static class ServiceCollectionExtensions
 		// add asgrd exception handler
 		services.AddExceptionHandler<AsgardExceptionHandler>();
 
+		// add device key provider
+		services.AddSingleton(deviceKeyProvider);
+
 		// add asgard request handler
 		services.AddTransient<AsgardMessageHandler>();
 		services.AddHttpClient("Asgard")
