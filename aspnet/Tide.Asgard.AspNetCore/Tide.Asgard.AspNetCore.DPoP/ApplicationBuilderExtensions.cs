@@ -20,9 +20,6 @@ public static class ApplicationBuilderExtensions
 
 		var issuerUrl = configuration["Keycloak:auth-server-url"]?.TrimEnd('/') + "/realms/" + configuration["Keycloak:realm"];
 
-		Console.WriteLine(Convert.ToHexString(Encoding.UTF8.GetBytes(issuerUrl)));
-		Console.WriteLine(Convert.ToHexString(Encoding.UTF8.GetBytes(publicAuthClientId)));
-
 		app.UseStaticFiles(new StaticFileOptions
 		{
 			FileProvider = fileProvider,

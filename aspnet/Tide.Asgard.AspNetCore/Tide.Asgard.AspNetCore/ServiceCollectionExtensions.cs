@@ -11,6 +11,7 @@ using System.Net.Http.Headers;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using Tide.Asgard.AspNetCore.Authentication.DPoP;
 using Tide.Asgard.AspNetCore.Authentication.Middleware;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 using Tide.Asgard.Core;
@@ -30,53 +31,53 @@ public static class ServiceCollectionExtensions
 	/// </summary>
 	/// <returns></returns>
 	/// <exception cref="InvalidOperationException"></exception>
-	//public static IServiceCollection AddTokenExchange(
-	//	this IServiceCollection services,
-	//	string tidecloakHttpsDomain,
-	//	string realm,
-	//	string clientId,
-	//	string[] certificatePaths
-	//	)
-	//{
-	//	ArgumentNullException.ThrowIfNull(services);
-	//	ArgumentNullException.ThrowIfNull(certificatePaths);
+	public static IServiceCollection AddTokenExchange(
+		this IServiceCollection services,
+		string tidecloakHttpsDomain,
+		string realm,
+		string clientId,
+		string[] certificatePaths
+		)
+	{
+		ArgumentNullException.ThrowIfNull(services);
+		ArgumentNullException.ThrowIfNull(certificatePaths);
 
-	//	var domainUri = new Uri(tidecloakHttpsDomain);
-	//	if(domainUri.Scheme != Uri.UriSchemeHttps)
-	//	{
-	//		throw new InvalidOperationException($"The provided domain '{tidecloakHttpsDomain}' is not a valid HTTPS URL.");
-	//	}
-	//	var httpsRealmDomain = domainUri.GetLeftPart(UriPartial.Authority) + $"/realms/{realm}/";
+		var domainUri = new Uri(tidecloakHttpsDomain);
+		if (domainUri.Scheme != Uri.UriSchemeHttps)
+		{
+			throw new InvalidOperationException($"The provided domain '{tidecloakHttpsDomain}' is not a valid HTTPS URL.");
+		}
+		var httpsRealmDomain = domainUri.GetLeftPart(UriPartial.Authority) + $"/realms/{realm}/";
 
-	//	X509CertificateCollection certList = [];
-	//	foreach (var certPath in certificatePaths)
-	//	{
-	//		if (!File.Exists(certPath))
-	//		{
-	//			throw new InvalidOperationException($"Certificate file not found at path: {certPath}");
-	//		}
-	//		certList.Add(X509CertificateLoader.LoadPkcs12FromFile(certPath, password: null));
-	//	}
+		X509CertificateCollection certList = [];
+		foreach (var certPath in certificatePaths)
+		{
+			if (!File.Exists(certPath))
+			{
+				throw new InvalidOperationException($"Certificate file not found at path: {certPath}");
+			}
+			certList.Add(X509CertificateLoader.LoadPkcs12FromFile(certPath, password: null));
+		}
 
-	//	services.AddHttpClient("asgard-token-exchange-client:" + clientId, client =>
-	//	{
-	//		client.BaseAddress = new Uri(httpsRealmDomain);
-	//	})
-	//	.ConfigurePrimaryHttpMessageHandler(() =>
-	//	{
-	//		return new SocketsHttpHandler
-	//		{
-	//			SslOptions = new SslClientAuthenticationOptions
-	//			{
-	//				ClientCertificates = certList
-	//			}
-	//		};
-	//	});
+		services.AddHttpClient("Tidecloak", client =>
+		{
+			client.BaseAddress = new Uri(httpsRealmDomain);
+		})
+		.ConfigurePrimaryHttpMessageHandler(() =>
+		{
+			return new SocketsHttpHandler
+			{
+				SslOptions = new SslClientAuthenticationOptions
+				{
+					ClientCertificates = certList
+				}
+			};
+		});
 
-	//	services.TryAddSingleton<ITokenExchangeService, TokenExchangeService>();
+		services.TryAddSingleton<ITokenExchangeService, TokenExchangeService>();
 
-	//	return services;
-	//}
+		return services;
+	}
 
 	// add support for the configuration to be a section to allow for multiple token exchange clients to be configured in the same app
 	public static IServiceCollection AddTokenExchangeForClient(
@@ -95,7 +96,7 @@ public static class ServiceCollectionExtensions
 
 		var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
 
-		services.AddHttpClient("asgard-token-exchange-client:" + clientId, client =>
+		services.AddHttpClient("Tidecloak", client =>
 		{
 			client.BaseAddress = new Uri(baseRealmUrl);
 			client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
@@ -131,10 +132,11 @@ public static class ServiceCollectionExtensions
 	/// <returns></returns>
 	public static IServiceCollection AddAsgard(
 		this IServiceCollection services,
-		IConfiguration asgardConfiguration
+		IConfiguration asgardConfiguration,
+		ResourceAuthenticationMode resourceAuthMode
 		)
 	{
-		return AddAsgard(services, asgardConfiguration, new FileDeviceKeyProvider());
+		return AddAsgard(services, asgardConfiguration, new FileDeviceKeyProvider(), resourceAuthMode);
 	}
 	/// <summary>
 	/// Default implementation of Asgard registration. Uses the provided IDeviceKeyProvider to store the device key.
@@ -147,7 +149,8 @@ public static class ServiceCollectionExtensions
 	public static IServiceCollection AddAsgard(
 		this IServiceCollection services,
 		IConfiguration config,
-		IDeviceKeyProvider deviceKeyProvider
+		IDeviceKeyProvider deviceKeyProvider,
+		ResourceAuthenticationMode resourceAuthMode
 		)
 	{
 		// add the tide client manager provider		
@@ -184,6 +187,7 @@ public static class ServiceCollectionExtensions
 		services.AddExceptionHandler<AsgardExceptionHandler>();
 
 		// add device key provider
+		deviceKeyProvider.EnsureKeyExists();
 		services.AddSingleton(deviceKeyProvider);
 
 		// add asgard request handler
@@ -191,6 +195,42 @@ public static class ServiceCollectionExtensions
 		services.AddHttpClient("Asgard")
 			.AddHttpMessageHandler<AsgardMessageHandler>();
 
+		// add the tidecloak client with correct credentials 
+		ConfigureConfidentialTidecloakClient(services, configurationSection, resourceAuthMode);
+
 		return services;
+	}
+
+	private static void ConfigureConfidentialTidecloakClient(IServiceCollection services, IConfigurationSection configurationSection, ResourceAuthenticationMode authMode)
+	{
+		string realm = configurationSection["realm"] ?? throw new InvalidOperationException("Missing required configuration: realm");
+		string tidecloakDomain = configurationSection["auth-server-url"] ?? throw new InvalidOperationException("Missing required configuration: auth-server-url");
+
+		string baseRealmUrl = new Uri(tidecloakDomain).GetLeftPart(UriPartial.Authority) + $"/realms/{realm}/";
+
+		switch (authMode)
+		{
+			case ResourceAuthenticationMode.ClientSecret:
+				string clientId = configurationSection["resource"] ?? throw new InvalidOperationException("Missing required configuration: resource");
+				string clientSecret = configurationSection["credentials:secret"] ?? throw new InvalidOperationException("Missing required configuration: credentials:secret");
+
+				var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+
+				services.TryAddSingleton<IDPoPKeyProvider, FileDPoPKeyProvider>();
+				services.TryAddSingleton<IDPoPProofGenerator, DPoPProofGenerator>();
+				services.TryAddSingleton<DPoPNonceStore>();
+				services.AddTransient<DPoPProofMessageHandler>();
+
+				services.AddHttpClient("Tidecloak", client =>
+				{
+					client.BaseAddress = new Uri(baseRealmUrl);
+					client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+				})
+				.AddHttpMessageHandler<DPoPProofMessageHandler>();
+				
+				break;
+			case ResourceAuthenticationMode.MTLs:
+				throw new NotImplementedException();
+		}
 	}
 }

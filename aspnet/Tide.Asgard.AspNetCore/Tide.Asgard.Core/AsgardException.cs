@@ -9,6 +9,7 @@ public enum AsgardErrorCode
 	Unknown = 0,
 	DokenNotFound = 1,
 	InvalidDoken = 2,
+	DPoPDelegationProofNotFound = 3,
 
 }
 public class AsgardException : Exception

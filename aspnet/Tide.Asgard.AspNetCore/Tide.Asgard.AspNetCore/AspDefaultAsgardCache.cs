@@ -11,9 +11,9 @@ namespace Tide.Asgard.AspNetCore.Authentication;
 
 public class AspDefaultAsgardCache : BaseAsgardCache
 {
-	private readonly ConcurrentDictionary<string, (ReadOnlyMemory<byte> policy, DateTime ttl)> _policies = new();
-	private readonly ConcurrentDictionary<string, (string token, DateTime ttl)> _applicationTokens = new();
-	private readonly ConcurrentDictionary<string, (string token, DateTime ttl)> _applicationTideDokens = new();
+	private static readonly ConcurrentDictionary<string, (ReadOnlyMemory<byte> policy, DateTime ttl)> _policies = new();
+	private static readonly ConcurrentDictionary<string, (string token, DateTime ttl)> _applicationTokens = new();
+	private static readonly ConcurrentDictionary<string, (string token, DateTime ttl)> _applicationTideDokens = new();
 
 	public AspDefaultAsgardCache(IHttpContextAccessor httpContextAccessor, ILogger<AspDefaultAsgardCache> logger, IPolicyProvider provider) : base(provider)
 	{

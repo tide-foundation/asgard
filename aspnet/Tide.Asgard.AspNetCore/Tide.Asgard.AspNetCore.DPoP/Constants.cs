@@ -46,6 +46,8 @@ public static class Constants
                 public const string InvalidToken = "invalid_token";
                 public const string InvalidRequest = "invalid_request";
                 public const string InvalidDPoPProof = "invalid_dpop_proof";
+                public const string DelegationRequired = "delegation_required";
+                public const string InvalidDelegation = "invalid_delegation";
             }
 
             public abstract class Description
