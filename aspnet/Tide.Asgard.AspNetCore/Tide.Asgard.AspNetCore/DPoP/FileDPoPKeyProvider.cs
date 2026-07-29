@@ -14,7 +14,7 @@ namespace Tide.Asgard.AspNetCore.Authentication.DPoP;
 ///     DPoP public key does not match GetDeviceKey().GetPublic() - the proof JWK must therefore
 ///     always come from GetPublicJwk(), never from the TideKey.
 /// </summary>
-public class FileDPoPKeyProvider : FileDeviceKeyProvider, IDPoPKeyProvider
+public class FileDPoPKeyProvider : FileResourceKeyProvider, IDPoPKeyProvider
 {
 	private readonly string _filePath;
 	private SigningCredentials? Creds { get; set; }

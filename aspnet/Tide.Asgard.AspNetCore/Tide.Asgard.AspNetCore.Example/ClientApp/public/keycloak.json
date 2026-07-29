@@ -1,8 +1,34 @@
 {
-  "realm": "test-no-tide",
+  "realm": "test1",
   "auth-server-url": "http://localhost:8080",
   "ssl-required": "external",
-  "resource": "asgard-frontend",
+  "resource": "asgard_frontend",
   "public-client": true,
-  "confidential-port": 0
+  "confidential-port": 0,
+  "jwk": {
+    "keys": [
+      {
+        "kid": "y-hExzI0P1S3KEZfClsEvNm4tGxwKC-czNW0tgEUMIg",
+        "kty": "OKP",
+        "alg": "EdDSA",
+        "use": "sig",
+        "crv": "Ed25519",
+        "x": "cxA2mlMZstyWjUGFNvkEacw8oAE8awe629OnWNerG8g"
+      }
+    ]
+  },
+  "backgroundUrl": "http://localhost:8080/realms/test1/tide-idp-resources/images/BACKGROUND_IMAGE",
+  "logoUrl": "http://localhost:8080/realms/test1/tide-idp-resources/images/LOGO",
+  "homeOrkUrl": "http://localhost:1001",
+  "vendorId": "4093680855300924259593850645786189655727027912250291741158173006761398863810",
+  "client-origin-auth-http://localhost:3000": "8bcgJSBDZCgFnp3W0yxbg9AJVDGPFdCovD1kB8A6eMRvwxCbDDZ8SzJcO0w/AdsdSHc/P72p+0CbD6XAR+BYCg==",
+  "client-origin-auth-http://localhost:8080": "D2MnIQ9I/O3jqMLWCgHZ9F/nVbmTVloJw8NYeJMYIlJfhj3MPt7ooiYDsHRN73eHQ5SLNuQGZZ2z1QdtE3yPBw==",
+  "gVVK": "7310369a5319b2dc968d418536f90469cc3ca0013c6b07badbd3a758d7ab1bc8",
+  "vvkId": "4093680855300924259593850645786189655727027912250291741158173006761398863810",
+  "orkUrl": "http://hostgateway:1001",
+  "payerPublic": "2000009882615cf77ae58d56f1c5ec6654688533c065a0358a26883ea86976cf9ae2b9",
+  "obfGVVK": "7310369a5319b2dc968d418536f90469cc3ca0013c6b07badbd3a758d7ab1bc8",
+  "gVRKCertificate": "z4JEjq5pPewC0UmbqQK4DA3ppChbcQlKEv4orDLNaxLFnFBHI+qjnBKyMGga3eSzP8EOg9QzRzWlscjdW5OqDA==",
+  "thresholdT": 3,
+  "thresholdN": 5
 }

@@ -10,6 +10,7 @@ public enum AsgardErrorCode
 	DokenNotFound = 1,
 	InvalidDoken = 2,
 	DPoPDelegationProofNotFound = 3,
+	SessionKeyApprovalNotFound = 4
 
 }
 public class AsgardException : Exception

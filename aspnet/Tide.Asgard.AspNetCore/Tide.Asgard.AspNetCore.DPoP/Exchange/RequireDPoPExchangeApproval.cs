@@ -43,10 +43,10 @@ internal sealed class DPoPExchangeApprovalFilter : IAsyncAuthorizationFilter
 	private static readonly JsonWebTokenHandler TokenHandler = new();
 	private readonly TimeSpan _proofValidityWindow;
 	private static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(30);
-	private readonly IDeviceKeyProvider _deviceKeyProvider;
+	private readonly IResourceKeyProvider _deviceKeyProvider;
 	private readonly ILogger<DPoPExchangeApprovalFilter> _logger;
 	private readonly IAsgardCache _cache;
-	public DPoPExchangeApprovalFilter(IDeviceKeyProvider deviceKeyProvider, IAsgardCache asgardCache, ILogger<DPoPExchangeApprovalFilter> logger, TimeSpan proofValidityWindow)
+	public DPoPExchangeApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgardCache asgardCache, ILogger<DPoPExchangeApprovalFilter> logger, TimeSpan proofValidityWindow)
 	{
 		_deviceKeyProvider = deviceKeyProvider;
 		_logger = logger;
@@ -78,7 +78,7 @@ internal sealed class DPoPExchangeApprovalFilter : IAsyncAuthorizationFilter
 			var challengeInput = jti != null
 				? "dpop-jti-challenge:" + jti
 				: "dpop-ath-challenge:" + Base64UrlEncoder.Encode(SHA256.HashData(Encoding.UTF8.GetBytes(context.HttpContext.Request.Headers.Authorization.ToString().Split(' ')[^1])));
-			var deviceKey = _deviceKeyProvider.GetDeviceKey();
+			var deviceKey = _deviceKeyProvider.GetResourceKey();
 			var challenge_sig = Base64UrlEncoder.Encode(deviceKey.Sign(Encoding.UTF8.GetBytes(challengeInput)));
 			context.HttpContext.Response.Headers["DPoP-Delegation-Key"] = Base64UrlEncoder.Encode(deviceKey.ToSubjectPublicKeyInfoBytes());
 			context.HttpContext.Response.Headers["DPoP-Delegation-Challenge"] = challenge_sig;
@@ -190,7 +190,7 @@ internal sealed class DPoPExchangeApprovalFilter : IAsyncAuthorizationFilter
 			context.Result = new UnauthorizedResult();
 			return;
 		}
-		var localDevicePublicKeyThumbprint = SHA256.HashData(_deviceKeyProvider.GetDeviceKey().ToSubjectPublicKeyInfoBytes());
+		var localDevicePublicKeyThumbprint = SHA256.HashData(_deviceKeyProvider.GetResourceKey().ToSubjectPublicKeyInfoBytes());
 		if(attestedResourcePublicKeyThumbprint.SequenceEqual(localDevicePublicKeyThumbprint) == false)
 		{
 			_logger.LogWarning("DPoP exchange approval failed: resource delegation token does not match this resource's device key");

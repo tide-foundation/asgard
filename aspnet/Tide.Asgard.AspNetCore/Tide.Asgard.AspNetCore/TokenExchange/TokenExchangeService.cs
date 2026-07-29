@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using Cryptide.Key;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -13,21 +14,37 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Tide.Asgard.Core;
+using Tide.Asgard.Core.Crypto.Ed25519;
 using Tide.Asgard.Core.PolicyHelpers;
 
 namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 
 public enum ResourceAuthenticationMode
 {
+	/// <summary>
+	/// Constant client-secret authentication to Tidecloak. Your resource will ONLY authenticate with these credentials.
+	/// </summary>
 	ClientSecret,
-	MTLs
+	/// <summary>
+	/// Asgard will look for a mTLS key if available. Defaults to client-secret authentication if mTLS credentials not found.
+	/// </summary>
+	AutoMTLS,
+	/// <summary>
+	/// Asgard will look for a mTLS key if available. If none found, will attempt to enroll a mTLS resource certificate using enrollment token.
+	/// </summary>
+	AutoMTLSEnrollment,
+	/// <summary>
+	/// Constant mTLS authentication to Tidecloak. Your resource will ONLY authenticate with the mTLS credentials.
+	/// </summary>
+	MTLS,
+
 }
 public interface ITokenExchangeService
 {
 	Task<string> ExchangeToken(string requestingClientId, string? requestedAudience = null);
 	Task<string> ExchangeTideDokenForApplicationDoken();
 }
-public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccessor httpContextAccessor, IDeviceKeyProvider deviceKeyProvider) : ITokenExchangeService
+public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccessor httpContextAccessor, IResourceKeyProvider resourceKeyProvider) : ITokenExchangeService
 {
 	private HttpContext GetHttpContext() => httpContextAccessor.HttpContext ?? throw new InvalidOperationException($"HTTP context is not available. Ensure {nameof(TokenExchangeService)} is only used in Controllers");
 	public async Task<string> ExchangeToken(string requestingClientId, string? requestedAudience = null)
@@ -128,6 +145,22 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 
 		var client = factory.CreateClient("Tidecloak");
 
+		if(client.DefaultRequestHeaders.Authorization == null && context.Items.TryGetValue("ValidatedSessionKeyApproval", out var sessionKeyApprovalItem))
+		{
+			// Means we are using mTLS to communicate with Tidecloak (Client-Secret or Signed JWT require Authorization headers)
+			// AND the user provided a SessionKeyApproval -> we need to create an ephemeral EdDSA key to tie the resulting doken to.
+
+			// Generate EdDSA key
+			var ephemeralEdDSAKey = TideKey.NewKey();
+
+			// Approve EdDSA key with current P-256 resource key
+			var currentResourceKey = resourceKeyProvider.GetResourceKey();
+
+			// how can i get the current resource key? DeviceKeyProvider?
+
+			// Add approval to actor_token param
+		}
+
 		var forms = new Dictionary<string, string>
 		{
 			["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -172,7 +205,7 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 		{
 			throw new AsgardException(AsgardErrorCode.DokenNotFound, headers =>
 			{
-				headers["Application-Key"] = Base64UrlEncoder.Encode(deviceKeyProvider.GetDeviceKey().GetPublic().ToJwk()); // maybe it's better to return a standard serialized (not SerializedComponent)
+				headers["Delegation-Key"] = Base64UrlEncoder.Encode(resourceKeyProvider.GetResourceKey().GetPublic().ToJwk()); // maybe it's better to return a standard serialized (not SerializedComponent)
 			});
 		}
 

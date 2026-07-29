@@ -9,6 +9,8 @@ namespace Tide.Asgard.AspNetCore.Authentication;
 
 public static class Utils
 {
+	public const string RESOURCE_CERTIFICATE_DEFAULT_PATH = "./resource.crt";
+	public const string RESOURCE_KEY_DEFAULT_PATH = "./resource.key";
 	/// <summary>
 	/// Finds the first jwk in the 'keys' section of the jwk set that has crv=Ed25519
 	/// </summary>

@@ -16,7 +16,7 @@ builder.Services
 	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
 	{
 		options.RequireHttpsMetadata = false;
-	//	options.TokenValidationParameters.IssuerSigningKey = Utils.GetEd25519IssuerKey(builder.Configuration);
+		options.TokenValidationParameters.IssuerSigningKey = Utils.GetEd25519IssuerKey(builder.Configuration);
 	})
 	.WithDPoP(opts =>
 	{
@@ -36,7 +36,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 
-app.UseTideSecuredDPoP(builder.Configuration, "asgard-frontend"); // needed   (fix????) no name needed
+app.UseTideSecuredDPoP(builder.Configuration, "asgard_frontend"); // needed   (fix????) no name needed
 
 app.UseAuthentication();
 app.UseAuthorization();

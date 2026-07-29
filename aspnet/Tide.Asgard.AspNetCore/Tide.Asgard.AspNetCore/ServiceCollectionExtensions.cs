@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
 // Modifications Copyright (c) Tide Foundation Limited.
 
+using Cryptide.Hashing;
+using Cryptide.Key;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -136,20 +138,20 @@ public static class ServiceCollectionExtensions
 		ResourceAuthenticationMode resourceAuthMode
 		)
 	{
-		return AddAsgard(services, asgardConfiguration, new FileDeviceKeyProvider(), resourceAuthMode);
+		return AddAsgard(services, asgardConfiguration, new FileResourceKeyProvider(), resourceAuthMode);
 	}
 	/// <summary>
 	/// Default implementation of Asgard registration. Uses the provided IDeviceKeyProvider to store the device key.
 	/// </summary>
 	/// <param name="services"></param>
 	/// <param name="config"></param>
-	/// <param name="deviceKeyProvider"></param>
+	/// <param name="resourceKeyProvider"></param>
 	/// <returns></returns>
 	/// <exception cref="Exception"></exception>
 	public static IServiceCollection AddAsgard(
 		this IServiceCollection services,
 		IConfiguration config,
-		IDeviceKeyProvider deviceKeyProvider,
+		IResourceKeyProvider resourceKeyProvider,
 		ResourceAuthenticationMode resourceAuthMode
 		)
 	{
@@ -162,7 +164,7 @@ public static class ServiceCollectionExtensions
 
 		var tideClientManagerProvider = new TideClientManagerProvider(
 			baseRealmUrl,
-			deviceKeyProvider,
+			resourceKeyProvider,
 			config["homeOrkUrl"],
 			config["networkThreshold"] == null ? null : int.Parse(config["networkThreshold"]!)
 			);
@@ -186,35 +188,70 @@ public static class ServiceCollectionExtensions
 		// add asgrd exception handler
 		services.AddExceptionHandler<AsgardExceptionHandler>();
 
-		// add device key provider
-		deviceKeyProvider.EnsureKeyExists();
-		services.AddSingleton(deviceKeyProvider);
-
 		// add asgard request handler
 		services.AddTransient<AsgardMessageHandler>();
 		services.AddHttpClient("Asgard")
 			.AddHttpMessageHandler<AsgardMessageHandler>();
 
 		// add the tidecloak client with correct credentials 
-		ConfigureConfidentialTidecloakClient(services, configurationSection, resourceAuthMode);
+		ConfigureConfidentialTidecloakClient(services, configurationSection, resourceAuthMode, resourceKeyProvider);
+
+		// add device key provider
+		services.AddSingleton(resourceKeyProvider);
 
 		return services;
 	}
 
-	private static void ConfigureConfidentialTidecloakClient(IServiceCollection services, IConfigurationSection configurationSection, ResourceAuthenticationMode authMode)
+	private static void ConfigureConfidentialTidecloakClient(IServiceCollection services, IConfigurationSection configurationSection, ResourceAuthenticationMode authMode, IResourceKeyProvider resourceKeyProvider)
 	{
 		string realm = configurationSection["realm"] ?? throw new InvalidOperationException("Missing required configuration: realm");
 		string tidecloakDomain = configurationSection["auth-server-url"] ?? throw new InvalidOperationException("Missing required configuration: auth-server-url");
 
 		string baseRealmUrl = new Uri(tidecloakDomain).GetLeftPart(UriPartial.Authority) + $"/realms/{realm}/";
 
+		var mtlsResult = GetMTLSCredentialsFromConfiguration(configurationSection);
+
 		switch (authMode)
 		{
-			case ResourceAuthenticationMode.ClientSecret:
-				string clientId = configurationSection["resource"] ?? throw new InvalidOperationException("Missing required configuration: resource");
-				string clientSecret = configurationSection["credentials:secret"] ?? throw new InvalidOperationException("Missing required configuration: credentials:secret");
+			case ResourceAuthenticationMode.AutoMTLS:
+				if (mtlsResult.certificatePath == null || mtlsResult.keyPath == null) goto case ResourceAuthenticationMode.ClientSecret;
 
-				var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+				// load keys into mtls client
+
+				break;
+			case ResourceAuthenticationMode.AutoMTLSEnrollment:
+				// cases
+
+				// key doesn't exist -> create key
+				if(mtlsResult.key == null)
+				{
+					mtlsResult.key = TideKey.NewKey(TideComponentSchemeType.P256);
+					resourceKeyProvider.SetResourceKey(mtlsResult.key);
+				}
+
+				// key exists BUT no certificate -> check for enrollment token (if none found throw error) -> create certificate then enroll it
+				if(mtlsResult.certificatePath == null)
+				{
+					var enrollmentToken = configurationSection["enrollment_token"] ?? throw new InvalidOperationException("'enrollment_token' required in configuration");
+					// create certificate
+
+				}
+
+				// key exists BUT no signed certificate -> check Tidecloak for a signed certificate
+
+				// signed certificate exists + key -> continue with general mtls client creation
+
+				if (certificatePath == null || keyPath == null)
+				{
+					// Look for enrollment token
+					var enrollmentTokenEncoded = configurationSection["enrollment_token"];
+					if(enrollmentTokenEncoded == null) throw new 
+				}
+				break;
+			case ResourceAuthenticationMode.ClientSecret:
+				
+				var clientSecret = GetClientSecretFromConfiguration(configurationSection) ?? throw new InvalidOperationException("Missing required configuration: credentials:secret");
+				var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientSecret.clientId}:{clientSecret.clientSecret}"));
 
 				services.TryAddSingleton<IDPoPKeyProvider, FileDPoPKeyProvider>();
 				services.TryAddSingleton<IDPoPProofGenerator, DPoPProofGenerator>();
@@ -229,8 +266,26 @@ public static class ServiceCollectionExtensions
 				.AddHttpMessageHandler<DPoPProofMessageHandler>();
 				
 				break;
-			case ResourceAuthenticationMode.MTLs:
+
+			case ResourceAuthenticationMode.MTLS:
 				throw new NotImplementedException();
 		}
+	}
+	private static (string clientId, string clientSecret)? GetClientSecretFromConfiguration(IConfigurationSection section)
+	{
+		string clientId = section["resource"] ?? throw new InvalidOperationException("Missing required configuration: resource");
+		string? clientSecret = section["credentials:secret"];
+		if (clientSecret == null) return null;
+		else return (clientId, clientSecret);
+	}
+	private static (string? certificatePath, X509Certificate2? certificate, string? keyPath, TideKey? key) GetMTLSCredentialsFromConfiguration(IConfigurationSection section)
+	{
+		string? certificatePath = section["certificate_path"];
+		string? keyPath = section["private_key_path"];
+
+		X509Certificate2? certificate = certificatePath == null ? null : X509CertificateLoader.LoadCertificateFromFile(certificatePath);
+		TideKey? key = keyPath == null ? null : TideKey.FromPemFile(keyPath);
+
+		return (certificatePath, certificate, keyPath, key);
 	}
 }
