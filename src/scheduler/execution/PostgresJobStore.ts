@@ -2,7 +2,7 @@
 // Licensed under the Tide Community Open Code License. See LICENSE in the project root.
 
 import { JobRun, JobRunRequest, JobStatus } from "./JobRun";
-import { JobStore } from "./JobStore";
+import { JobStore, JobStoreStats } from "./JobStore";
 
 // The host supplies the connection, the SDK supplies the SQL. This is the whole
 // surface needed, and node-postgres Pool and Client both satisfy it structurally,
@@ -82,8 +82,17 @@ export class PostgresJobStore implements JobStore {
     // SKIP LOCKED is what lets any number of workers run this concurrently
     // without ever handing the same run to two of them. Rows another worker has
     // locked are stepped over rather than waited on.
-    async claimDue(owner: string, nowMs: number, leaseMs: number, max: number): Promise<JobRun[]> {
+    async claimDue(
+        owner: string,
+        nowMs: number,
+        leaseMs: number,
+        max: number,
+        handlers?: readonly string[]
+    ): Promise<JobRun[]> {
         if (max <= 0) return [];
+        // An empty allow list means this worker can run nothing, which is not
+        // the same as no filter at all.
+        if (handlers !== undefined && handlers.length === 0) return [];
 
         const result = await this.sql.query(
             `update asgard_job_runs
@@ -94,13 +103,15 @@ export class PostgresJobStore implements JobStore {
                  updated_at_ms = $2
              where id in (
                  select id from asgard_job_runs
-                 where status = 'pending' and run_at_ms <= $2
+                 where status = 'pending'
+                   and run_at_ms <= $2
+                   and ($5::text[] is null or handler = any($5))
                  order by run_at_ms, id
                  for update skip locked
                  limit $4
              )
              returning ${COLUMNS}`,
-            [owner, nowMs, leaseMs, max]);
+            [owner, nowMs, leaseMs, max, handlers === undefined ? null : Array.from(handlers)]);
 
         return result.rows.map(toJobRun);
     }
@@ -149,6 +160,51 @@ export class PostgresJobStore implements JobStore {
             [nowMs]);
 
         return result.rowCount ?? 0;
+    }
+
+    // Deleting through a bounded subquery rather than one sweeping statement, so
+    // a long backlog is cleared in chunks instead of a single delete holding
+    // locks across the whole table.
+    async purgeSettled(beforeMs: number, limit: number, includeDead = false): Promise<number> {
+        if (limit <= 0) return 0;
+
+        const statuses = includeDead
+            ? [JobStatus.Succeeded, JobStatus.Dead]
+            : [JobStatus.Succeeded];
+
+        const result = await this.sql.query(
+            `delete from asgard_job_runs
+             where id in (
+                 select id from asgard_job_runs
+                 where status = any($1) and updated_at_ms < $2
+                 order by updated_at_ms, id
+                 limit $3
+             )`,
+            [statuses, beforeMs, limit]);
+
+        return result.rowCount ?? 0;
+    }
+
+    async stats(nowMs: number): Promise<JobStoreStats> {
+        const result = await this.sql.query(
+            `select
+                 count(*) filter (where status = 'pending')   as pending,
+                 count(*) filter (where status = 'leased')    as leased,
+                 count(*) filter (where status = 'succeeded') as succeeded,
+                 count(*) filter (where status = 'dead')      as dead,
+                 coalesce(max($1::bigint - run_at_ms)
+                     filter (where status = 'pending' and run_at_ms <= $1), 0) as oldest
+             from asgard_job_runs`,
+            [nowMs]);
+
+        const row = result.rows[0];
+        return {
+            pending: Number(row.pending),
+            leased: Number(row.leased),
+            succeeded: Number(row.succeeded),
+            dead: Number(row.dead),
+            oldestPendingAgeMs: Number(row.oldest)
+        };
     }
 
     async get(runId: string): Promise<JobRun | null> {

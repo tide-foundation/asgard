@@ -279,6 +279,109 @@ internal static class PostgresTests
 			await Reset();
 			Assert.True(await store.GetAsync("999999") is null, "expected null");
 		});
+
+		runner.TestAsync("claiming can be limited to a set of handlers", async () =>
+		{
+			await Reset();
+			await store.EnqueueAsync(new JobRunRequest { Handler = "known", RunAtMs = T0, IdempotencyKey = "a" });
+			await store.EnqueueAsync(new JobRunRequest { Handler = "other", RunAtMs = T0, IdempotencyKey = "b" });
+
+			var claimed = await store.ClaimDueAsync("worker-a", T0, 30_000, 10, ["known"]);
+			Assert.Sequence(["known"], claimed.Select(r => r.Handler));
+			Assert.Equal(1, (await store.StatsAsync(T0)).Pending,
+				"the other handler's run is left for someone else");
+		});
+
+		runner.TestAsync("an empty handler list claims nothing rather than everything", async () =>
+		{
+			await Reset();
+			await store.EnqueueAsync(new JobRunRequest { Handler = "known", RunAtMs = T0 });
+			Assert.Equal(0, (await store.ClaimDueAsync("worker-a", T0, 30_000, 10, [])).Count);
+		});
+
+		runner.TestAsync("omitting the handler list claims everything", async () =>
+		{
+			await Reset();
+			await store.EnqueueAsync(new JobRunRequest { Handler = "known", RunAtMs = T0, IdempotencyKey = "a" });
+			await store.EnqueueAsync(new JobRunRequest { Handler = "other", RunAtMs = T0, IdempotencyKey = "b" });
+
+			Assert.Equal(2, (await store.ClaimDueAsync("worker-a", T0, 30_000, 10)).Count);
+		});
+
+		runner.TestAsync("purge deletes settled runs past the cutoff and keeps the rest", async () =>
+		{
+			await Reset();
+			var old = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0, IdempotencyKey = "old" });
+			var recent = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0, IdempotencyKey = "recent" });
+			var pending = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0, IdempotencyKey = "pending" });
+
+			await store.CompleteAsync(old!.Id, null, T0);
+			await store.CompleteAsync(recent!.Id, null, T0 + 10_000);
+
+			Assert.Equal(1, await store.PurgeSettledAsync(T0 + 5_000, 100));
+			Assert.True(await store.GetAsync(old.Id) is null, "the old run should be gone");
+			Assert.True(await store.GetAsync(recent.Id) is not null, "the recent run should remain");
+			Assert.True(await store.GetAsync(pending!.Id) is not null, "the pending run should remain");
+		});
+
+		runner.TestAsync("purge keeps dead runs unless asked for", async () =>
+		{
+			await Reset();
+			var run = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+			await store.DeadLetterAsync(run!.Id, "gave up", null, T0);
+
+			Assert.Equal(0, await store.PurgeSettledAsync(T0 + 5_000, 100));
+			Assert.Equal(1, await store.PurgeSettledAsync(T0 + 5_000, 100, includeDead: true));
+		});
+
+		runner.TestAsync("purge honours the batch limit", async () =>
+		{
+			await Reset();
+			for (var i = 0; i < 5; i++)
+			{
+				var run = await store.EnqueueAsync(new JobRunRequest
+				{
+					Handler = "h", RunAtMs = T0, IdempotencyKey = $"k{i}"
+				});
+				await store.CompleteAsync(run!.Id, null, T0);
+			}
+
+			Assert.Equal(2, await store.PurgeSettledAsync(T0 + 1, 2));
+			Assert.Equal(2, await store.PurgeSettledAsync(T0 + 1, 2));
+			Assert.Equal(1, await store.PurgeSettledAsync(T0 + 1, 2));
+			Assert.Equal(0, await store.PurgeSettledAsync(T0 + 1, 2));
+		});
+
+		runner.TestAsync("stats counts by status and reports the oldest waiting run", async () =>
+		{
+			await Reset();
+			await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0, IdempotencyKey = "a" });
+			await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 + 5_000, IdempotencyKey = "b" });
+			var done = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0, IdempotencyKey = "c" });
+			await store.CompleteAsync(done!.Id, null, T0);
+
+			var stats = await store.StatsAsync(T0 + 10_000);
+			Assert.Equal(2, stats.Pending);
+			Assert.Equal(1, stats.Succeeded);
+			Assert.Equal(0, stats.Dead);
+			Assert.Equal(10_000L, stats.OldestPendingAgeMs);
+		});
+
+		runner.TestAsync("stats does not count a run that is not due yet as waiting", async () =>
+		{
+			await Reset();
+			await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 + 60_000 });
+
+			var stats = await store.StatsAsync(T0);
+			Assert.Equal(1, stats.Pending);
+			Assert.Equal(0L, stats.OldestPendingAgeMs);
+		});
+
+		runner.TestAsync("stats on an empty table reports zeros", async () =>
+		{
+			await Reset();
+			Assert.Equal(new JobStoreStats(0, 0, 0, 0, 0), await store.StatsAsync(T0));
+		});
 	}
 
 	private static void WorkerOnPostgres(TestRunner runner, PostgresJobStore store)

@@ -231,6 +231,92 @@ describe("postgres store", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DATABA
     test("get returns null for a run that does not exist", async () => {
         assert.equal(await store.get("999999"), null);
     });
+
+    test("claiming can be limited to a set of handlers", async () => {
+        await store.enqueue({ handler: "known", runAtMs: T0, idempotencyKey: "a" });
+        await store.enqueue({ handler: "other", runAtMs: T0, idempotencyKey: "b" });
+
+        const claimed = await store.claimDue("worker-a", T0, 30_000, 10, ["known"]);
+        assert.deepEqual(claimed.map(r => r.handler), ["known"]);
+
+        const { rows } = await pool.query(
+            "select count(*)::int as n from asgard_job_runs where status = 'pending'");
+        assert.equal(rows[0].n, 1, "the other handler's run is left for someone else");
+    });
+
+    test("an empty handler list claims nothing rather than everything", async () => {
+        await store.enqueue({ handler: "known", runAtMs: T0 });
+        assert.equal((await store.claimDue("worker-a", T0, 30_000, 10, [])).length, 0);
+    });
+
+    test("omitting the handler list claims everything", async () => {
+        await store.enqueue({ handler: "known", runAtMs: T0, idempotencyKey: "a" });
+        await store.enqueue({ handler: "other", runAtMs: T0, idempotencyKey: "b" });
+
+        assert.equal((await store.claimDue("worker-a", T0, 30_000, 10)).length, 2);
+    });
+
+    test("purge deletes settled runs past the cutoff and keeps the rest", async () => {
+        const old = await store.enqueue({ handler: "h", runAtMs: T0, idempotencyKey: "old" });
+        const recent = await store.enqueue({ handler: "h", runAtMs: T0, idempotencyKey: "recent" });
+        const pending = await store.enqueue({ handler: "h", runAtMs: T0, idempotencyKey: "pending" });
+
+        await store.complete(old.id, null, T0);
+        await store.complete(recent.id, null, T0 + 10_000);
+
+        assert.equal(await store.purgeSettled(T0 + 5_000, 100), 1);
+        assert.equal(await store.get(old.id), null);
+        assert.notEqual(await store.get(recent.id), null);
+        assert.notEqual(await store.get(pending.id), null);
+    });
+
+    test("purge keeps dead runs unless asked for", async () => {
+        const run = await store.enqueue({ handler: "h", runAtMs: T0 });
+        await store.deadLetter(run.id, "gave up", null, T0);
+
+        assert.equal(await store.purgeSettled(T0 + 5_000, 100), 0);
+        assert.equal(await store.purgeSettled(T0 + 5_000, 100, true), 1);
+    });
+
+    test("purge honours the batch limit", async () => {
+        for (let i = 0; i < 5; i++) {
+            const run = await store.enqueue({ handler: "h", runAtMs: T0, idempotencyKey: `k${i}` });
+            await store.complete(run.id, null, T0);
+        }
+
+        assert.equal(await store.purgeSettled(T0 + 1, 2), 2);
+        assert.equal(await store.purgeSettled(T0 + 1, 2), 2);
+        assert.equal(await store.purgeSettled(T0 + 1, 2), 1);
+        assert.equal(await store.purgeSettled(T0 + 1, 2), 0);
+    });
+
+    test("stats counts by status and reports the oldest waiting run", async () => {
+        await store.enqueue({ handler: "h", runAtMs: T0, idempotencyKey: "a" });
+        await store.enqueue({ handler: "h", runAtMs: T0 + 5_000, idempotencyKey: "b" });
+        const done = await store.enqueue({ handler: "h", runAtMs: T0, idempotencyKey: "c" });
+        await store.complete(done.id, null, T0);
+
+        const stats = await store.stats(T0 + 10_000);
+        assert.equal(stats.pending, 2);
+        assert.equal(stats.succeeded, 1);
+        assert.equal(stats.dead, 0);
+        assert.equal(stats.oldestPendingAgeMs, 10_000);
+    });
+
+    test("stats does not count a run that is not due yet as waiting", async () => {
+        await store.enqueue({ handler: "h", runAtMs: T0 + 60_000 });
+
+        const stats = await store.stats(T0);
+        assert.equal(stats.pending, 1);
+        assert.equal(stats.oldestPendingAgeMs, 0);
+    });
+
+    test("stats on an empty table reports zeros", async () => {
+        const stats = await store.stats(T0);
+        assert.deepEqual(stats, {
+            pending: 0, leased: 0, succeeded: 0, dead: 0, oldestPendingAgeMs: 0
+        });
+    });
 });
 
 describe("worker on postgres", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DATABASE_URL is not set" }, () => {

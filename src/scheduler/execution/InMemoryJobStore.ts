@@ -2,7 +2,7 @@
 // Licensed under the Tide Community Open Code License. See LICENSE in the project root.
 
 import { JobRun, JobRunRequest, JobStatus } from "./JobRun";
-import { JobStore } from "./JobStore";
+import { JobStore, JobStoreStats } from "./JobStore";
 
 // Reference implementation and test double. Everything survives only as long as
 // the process, so use it for local timers and for exercising a worker, not for
@@ -48,9 +48,18 @@ export class InMemoryJobStore implements JobStore {
         return run;
     }
 
-    async claimDue(owner: string, nowMs: number, leaseMs: number, max: number): Promise<JobRun[]> {
+    async claimDue(
+        owner: string,
+        nowMs: number,
+        leaseMs: number,
+        max: number,
+        handlers?: readonly string[]
+    ): Promise<JobRun[]> {
+        const allowed = handlers === undefined ? null : new Set(handlers);
+
         const due = Array.from(this.runs.values())
             .filter(r => r.status === JobStatus.Pending && r.runAtMs <= nowMs)
+            .filter(r => allowed === null || allowed.has(r.handler))
             .sort((a, b) => a.runAtMs - b.runAtMs || compareIds(a.id, b.id))
             .slice(0, Math.max(0, max));
 
@@ -143,6 +152,45 @@ export class InMemoryJobStore implements JobStore {
         }
 
         return reaped;
+    }
+
+    async purgeSettled(beforeMs: number, limit: number, includeDead = false): Promise<number> {
+        const terminal = includeDead
+            ? [JobStatus.Succeeded, JobStatus.Dead]
+            : [JobStatus.Succeeded];
+
+        const victims = Array.from(this.runs.values())
+            .filter(r => terminal.indexOf(r.status) >= 0 && r.updatedAtMs < beforeMs)
+            .sort((a, b) => a.updatedAtMs - b.updatedAtMs || compareIds(a.id, b.id))
+            .slice(0, Math.max(0, limit));
+
+        for (const run of victims) {
+            this.runs.delete(run.id);
+            // The key goes with the row, matching a delete in a durable store.
+            // A schedule that later re-materializes the same occurrence is then
+            // free to enqueue it again, which is why retention must outlive the
+            // period of anything it holds keys for.
+            if (run.idempotencyKey !== null) this.keys.delete(run.idempotencyKey);
+        }
+
+        return victims.length;
+    }
+
+    async stats(nowMs: number): Promise<JobStoreStats> {
+        let oldestPendingAgeMs = 0;
+
+        for (const run of this.runs.values()) {
+            if (run.status !== JobStatus.Pending || run.runAtMs > nowMs) continue;
+            oldestPendingAgeMs = Math.max(oldestPendingAgeMs, nowMs - run.runAtMs);
+        }
+
+        return {
+            pending: this.countByStatus(JobStatus.Pending),
+            leased: this.countByStatus(JobStatus.Leased),
+            succeeded: this.countByStatus(JobStatus.Succeeded),
+            dead: this.countByStatus(JobStatus.Dead),
+            oldestPendingAgeMs
+        };
     }
 
     async get(runId: string): Promise<JobRun | null> {

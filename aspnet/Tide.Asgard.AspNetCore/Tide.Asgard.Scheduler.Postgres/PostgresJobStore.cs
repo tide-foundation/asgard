@@ -112,9 +112,13 @@ public sealed class PostgresJobStore : IJobStore, IAsyncDisposable
 	// without ever handing the same run to two of them. Rows another worker has
 	// locked are stepped over rather than waited on.
 	public async Task<IReadOnlyList<JobRun>> ClaimDueAsync(
-		string owner, long nowMs, long leaseMs, int max, CancellationToken ct = default)
+		string owner, long nowMs, long leaseMs, int max,
+		IReadOnlyCollection<string>? handlers = null, CancellationToken ct = default)
 	{
 		if (max <= 0) return [];
+		// An empty allow list means this worker can run nothing, which is not the
+		// same as no filter at all.
+		if (handlers is { Count: 0 }) return [];
 
 		await using var command = _dataSource.CreateCommand($"""
 			update asgard_job_runs
@@ -125,7 +129,9 @@ public sealed class PostgresJobStore : IJobStore, IAsyncDisposable
 			    updated_at_ms = $2
 			where id in (
 			    select id from asgard_job_runs
-			    where status = 'pending' and run_at_ms <= $2
+			    where status = 'pending'
+			      and run_at_ms <= $2
+			      and ($5::text[] is null or handler = any($5))
 			    order by run_at_ms, id
 			    for update skip locked
 			    limit $4
@@ -137,6 +143,11 @@ public sealed class PostgresJobStore : IJobStore, IAsyncDisposable
 		command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
 		command.Parameters.Add(new NpgsqlParameter { Value = leaseMs });
 		command.Parameters.Add(new NpgsqlParameter { Value = max });
+		command.Parameters.Add(new NpgsqlParameter
+		{
+			Value = handlers is null ? DBNull.Value : handlers.ToArray(),
+			NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text
+		});
 
 		var claimed = new List<JobRun>();
 		await using var reader = await command.ExecuteReaderAsync(ct);
@@ -203,6 +214,62 @@ public sealed class PostgresJobStore : IJobStore, IAsyncDisposable
 
 		command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
 		return await command.ExecuteNonQueryAsync(ct);
+	}
+
+	// Deleting through a bounded subquery rather than one sweeping statement, so
+	// a long backlog is cleared in chunks instead of a single delete holding
+	// locks across the whole table.
+	public async Task<int> PurgeSettledAsync(
+		long beforeMs, int limit, bool includeDead = false, CancellationToken ct = default)
+	{
+		if (limit <= 0) return 0;
+
+		await using var command = _dataSource.CreateCommand("""
+			delete from asgard_job_runs
+			where id in (
+			    select id from asgard_job_runs
+			    where status = any($1) and updated_at_ms < $2
+			    order by updated_at_ms, id
+			    limit $3
+			)
+			""");
+
+		string[] statuses = includeDead ? ["succeeded", "dead"] : ["succeeded"];
+		command.Parameters.Add(new NpgsqlParameter
+		{
+			Value = statuses,
+			NpgsqlDbType = NpgsqlDbType.Array | NpgsqlDbType.Text
+		});
+		command.Parameters.Add(new NpgsqlParameter { Value = beforeMs });
+		command.Parameters.Add(new NpgsqlParameter { Value = limit });
+
+		return await command.ExecuteNonQueryAsync(ct);
+	}
+
+	public async Task<JobStoreStats> StatsAsync(long nowMs, CancellationToken ct = default)
+	{
+		await using var command = _dataSource.CreateCommand("""
+			select
+			    count(*) filter (where status = 'pending')   as pending,
+			    count(*) filter (where status = 'leased')    as leased,
+			    count(*) filter (where status = 'succeeded') as succeeded,
+			    count(*) filter (where status = 'dead')      as dead,
+			    coalesce(max($1::bigint - run_at_ms)
+			        filter (where status = 'pending' and run_at_ms <= $1), 0) as oldest
+			from asgard_job_runs
+			""");
+
+		command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
+
+		await using var reader = await command.ExecuteReaderAsync(ct);
+		await reader.ReadAsync(ct);
+
+		return new JobStoreStats(
+			(int)reader.GetInt64(0),
+			(int)reader.GetInt64(1),
+			(int)reader.GetInt64(2),
+			(int)reader.GetInt64(3),
+			reader.GetInt64(4));
 	}
 
 	public async Task<JobRun?> GetAsync(string runId, CancellationToken ct = default)

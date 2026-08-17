@@ -25,14 +25,14 @@ import {
     JitterMode, RetryPolicy, DEFAULT_RETRY_POLICY, retryDelayMs, shouldRetry, PermanentJobError
 } from "./scheduler/execution/RetryPolicy";
 import { JobRun, JobRunRequest, JobStatus } from "./scheduler/execution/JobRun";
-import { JobStore } from "./scheduler/execution/JobStore";
+import { JobStore, JobStoreStats } from "./scheduler/execution/JobStore";
 import { InMemoryJobStore } from "./scheduler/execution/InMemoryJobStore";
 import {
     PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL
 } from "./scheduler/execution/PostgresJobStore";
 import { HandlerRegistry, JobContext, JobHandler } from "./scheduler/execution/HandlerRegistry";
 import {
-    Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy
+    Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy, RetentionPolicy
 } from "./scheduler/execution/Worker";
 
 export { GenericResourceAccessThresholdRoleContract }
@@ -48,7 +48,7 @@ export { specToJson, specFromJson, specToString, specFromString, SPEC_VERSION }
 export { CalendarSpec, DstFoldPolicy, DstGapPolicy, IntervalMode, IntervalSpec, OnceSpec, ScheduleSpec }
 export { Clock, systemClock, FakeClock }
 export { JitterMode, RetryPolicy, DEFAULT_RETRY_POLICY, retryDelayMs, shouldRetry, PermanentJobError }
-export { JobRun, JobRunRequest, JobStatus, JobStore, InMemoryJobStore }
+export { JobRun, JobRunRequest, JobStatus, JobStore, JobStoreStats, InMemoryJobStore }
 export { PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL }
 export { HandlerRegistry, JobContext, JobHandler }
-export { Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy }
+export { Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy, RetentionPolicy }

@@ -7,7 +7,7 @@ import { IntervalMode, ScheduleSpec } from "../expression/Spec";
 import { Clock, systemClock } from "./Clock";
 import { HandlerRegistry, JobContext } from "./HandlerRegistry";
 import { JobRun, JobRunRequest } from "./JobRun";
-import { JobStore } from "./JobStore";
+import { JobStore, JobStoreStats } from "./JobStore";
 import { DEFAULT_RETRY_POLICY, PermanentJobError, RetryPolicy, retryDelayMs } from "./RetryPolicy";
 
 export enum MisfirePolicy {
@@ -32,6 +32,18 @@ export interface ScheduleDefinition {
     readonly misfire?: MisfirePolicy;
 }
 
+export interface RetentionPolicy {
+    // Settled runs older than this are deleted.
+    readonly afterMs: number;
+    // How often to sweep.
+    readonly everyMs: number;
+    // Rows per sweep, so a long backlog clears over several passes.
+    readonly batch?: number;
+    // Off by default. A dead run is evidence that something never ran, and
+    // deleting it loses the only record of that.
+    readonly includeDead?: boolean;
+}
+
 export interface WorkerOptions {
     readonly store: JobStore;
     readonly registry: HandlerRegistry;
@@ -41,6 +53,14 @@ export interface WorkerOptions {
     readonly concurrency?: number;
     readonly pollIntervalMs?: number;
     readonly leaseMs?: number;
+    // How often start renews the leases of in flight runs. Defaults to a third
+    // of leaseMs, so two renewals can be missed before a lease lapses.
+    readonly heartbeatMs?: number;
+    // Claim only runs whose handler is registered here. On by default, so in a
+    // mixed fleet a run is left for a process that can execute it. Turn off to
+    // have this worker claim everything and dead letter what it cannot run.
+    readonly claimOnlyRegisteredHandlers?: boolean;
+    readonly retention?: RetentionPolicy;
     readonly retry?: RetryPolicy;
     readonly random?: () => number;
     readonly onError?: (error: unknown, run: JobRun | null) => void;
@@ -53,6 +73,7 @@ export interface TickResult {
     readonly succeeded: number;
     readonly retried: number;
     readonly dead: number;
+    readonly purged: number;
 }
 
 interface TrackedSchedule {
@@ -76,13 +97,19 @@ export class Worker {
     private readonly concurrency: number;
     private readonly pollIntervalMs: number;
     private readonly leaseMs: number;
+    private readonly heartbeatMs: number;
+    private readonly claimOnlyRegisteredHandlers: boolean;
+    private readonly retention: RetentionPolicy | null;
     private readonly retry: RetryPolicy;
     private readonly random: () => number;
     private readonly onError: (error: unknown, run: JobRun | null) => void;
 
     private readonly schedules = new Map<string, TrackedSchedule>();
+    private readonly inFlight = new Set<string>();
     private readonly stopController = new AbortController();
     private loop: Promise<void> | null = null;
+    private renewal: Promise<void> | null = null;
+    private nextPurgeAtMs = 0;
 
     constructor(options: WorkerOptions) {
         this.store = options.store;
@@ -92,6 +119,9 @@ export class Worker {
         this.concurrency = Math.max(1, options.concurrency ?? 4);
         this.pollIntervalMs = Math.max(1, options.pollIntervalMs ?? 1_000);
         this.leaseMs = Math.max(1, options.leaseMs ?? 30_000);
+        this.heartbeatMs = Math.max(1, options.heartbeatMs ?? Math.floor(this.leaseMs / 3));
+        this.claimOnlyRegisteredHandlers = options.claimOnlyRegisteredHandlers ?? true;
+        this.retention = options.retention ?? null;
         this.retry = options.retry ?? DEFAULT_RETRY_POLICY;
         this.random = options.random ?? Math.random;
         this.onError = options.onError ?? (() => { });
@@ -139,8 +169,12 @@ export class Worker {
         const now = this.clock.nowMs();
 
         const reaped = await this.store.reapExpired(now);
+        const purged = await this.purge(now);
         const materialized = await this.materialize(now);
-        const claimed = await this.store.claimDue(this.owner, now, this.leaseMs, this.concurrency);
+
+        const claimed = await this.store.claimDue(
+            this.owner, now, this.leaseMs, this.concurrency,
+            this.claimOnlyRegisteredHandlers ? this.registry.names() : undefined);
 
         let succeeded = 0;
         let retried = 0;
@@ -153,7 +187,13 @@ export class Worker {
             else dead += 1;
         }
 
-        return { reaped, materialized, claimed: claimed.length, succeeded, retried, dead };
+        return { reaped, materialized, claimed: claimed.length, succeeded, retried, dead, purged };
+    }
+
+    // Counts by status plus the age of the oldest waiting run, for feeding
+    // metrics. Alert on oldestPendingAgeMs.
+    stats(): Promise<JobStoreStats> {
+        return this.store.stats(this.clock.nowMs());
     }
 
     start(): void {
@@ -169,6 +209,8 @@ export class Worker {
                 await this.clock.sleep(this.pollIntervalMs, this.stopController.signal);
             }
         })();
+
+        this.renewal = this.renewLeases();
     }
 
     // Stops claiming and waits for the current pass to finish. In flight
@@ -176,9 +218,50 @@ export class Worker {
     // reaper, which is why handlers have to be idempotent.
     async stop(): Promise<void> {
         this.stopController.abort();
+
         const loop = this.loop;
+        const renewal = this.renewal;
         this.loop = null;
+        this.renewal = null;
+
         if (loop !== null) await loop;
+        if (renewal !== null) await renewal;
+    }
+
+    // Keeps the leases of in flight runs alive for as long as their handlers are
+    // working, so a handler that outlives leaseMs is not reaped and run twice by
+    // another worker. Runs alongside the tick loop rather than inside it,
+    // because a tick is blocked on the very handlers that need renewing.
+    private renewLeases(): Promise<void> {
+        return (async () => {
+            while (!this.stopController.signal.aborted) {
+                await this.clock.sleep(this.heartbeatMs, this.stopController.signal);
+                if (this.stopController.signal.aborted) break;
+                if (this.inFlight.size === 0) continue;
+
+                const until = this.clock.nowMs() + this.leaseMs;
+                for (const runId of Array.from(this.inFlight)) {
+                    try {
+                        // A lost lease means the reaper already gave the run to
+                        // someone else. Stop renewing, the handler's own
+                        // heartbeat call will tell it to stop.
+                        if (!await this.store.heartbeat(runId, until)) this.inFlight.delete(runId);
+                    } catch (error) {
+                        this.onError(error, null);
+                    }
+                }
+            }
+        })();
+    }
+
+    private async purge(nowMs: number): Promise<number> {
+        if (this.retention === null || nowMs < this.nextPurgeAtMs) return 0;
+
+        this.nextPurgeAtMs = nowMs + this.retention.everyMs;
+        return this.store.purgeSettled(
+            nowMs - this.retention.afterMs,
+            this.retention.batch ?? 1_000,
+            this.retention.includeDead ?? false);
     }
 
     private async materialize(nowMs: number): Promise<number> {
@@ -270,10 +353,13 @@ export class Worker {
             heartbeat: () => this.store.heartbeat(run.id, this.clock.nowMs() + this.leaseMs)
         };
 
+        this.inFlight.add(run.id);
         try {
             await handler(run.payload, ctx);
         } catch (error) {
             return this.settleFailure(run, error);
+        } finally {
+            this.inFlight.delete(run.id);
         }
 
         const at = this.clock.nowMs();

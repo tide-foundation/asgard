@@ -26,12 +26,16 @@ public sealed class InMemoryJobStore : IJobStore
 	}
 
 	public Task<IReadOnlyList<JobRun>> ClaimDueAsync(
-		string owner, long nowMs, long leaseMs, int max, CancellationToken ct = default)
+		string owner, long nowMs, long leaseMs, int max,
+		IReadOnlyCollection<string>? handlers = null, CancellationToken ct = default)
 	{
+		var allowed = handlers is null ? null : new HashSet<string>(handlers);
+
 		lock (_gate)
 		{
 			var due = _runs.Values
 				.Where(r => r.Status == JobStatus.Pending && r.RunAtMs <= nowMs)
+				.Where(r => allowed is null || allowed.Contains(r.Handler))
 				.OrderBy(r => r.RunAtMs)
 				.ThenBy(r => SequenceOf(r.Id))
 				.Take(Math.Max(0, max))
@@ -161,6 +165,55 @@ public sealed class InMemoryJobStore : IJobStore
 			}
 
 			return Task.FromResult(reaped);
+		}
+	}
+
+	public Task<int> PurgeSettledAsync(
+		long beforeMs, int limit, bool includeDead = false, CancellationToken ct = default)
+	{
+		lock (_gate)
+		{
+			var victims = _runs.Values
+				.Where(r => r.Status == JobStatus.Succeeded
+					|| (includeDead && r.Status == JobStatus.Dead))
+				.Where(r => r.UpdatedAtMs < beforeMs)
+				.OrderBy(r => r.UpdatedAtMs)
+				.ThenBy(r => SequenceOf(r.Id))
+				.Take(Math.Max(0, limit))
+				.ToList();
+
+			foreach (var run in victims)
+			{
+				_runs.Remove(run.Id);
+
+				// The key goes with the row, matching a delete in a durable
+				// store. A schedule that later re-materializes the same
+				// occurrence is then free to enqueue it again, which is why
+				// retention must outlive the period of anything it holds keys for.
+				if (run.IdempotencyKey is { } key) _keys.Remove(key);
+			}
+
+			return Task.FromResult(victims.Count);
+		}
+	}
+
+	public Task<JobStoreStats> StatsAsync(long nowMs, CancellationToken ct = default)
+	{
+		lock (_gate)
+		{
+			long oldest = 0;
+			foreach (var run in _runs.Values)
+			{
+				if (run.Status != JobStatus.Pending || run.RunAtMs > nowMs) continue;
+				oldest = Math.Max(oldest, nowMs - run.RunAtMs);
+			}
+
+			return Task.FromResult(new JobStoreStats(
+				_runs.Values.Count(r => r.Status == JobStatus.Pending),
+				_runs.Values.Count(r => r.Status == JobStatus.Leased),
+				_runs.Values.Count(r => r.Status == JobStatus.Succeeded),
+				_runs.Values.Count(r => r.Status == JobStatus.Dead),
+				oldest));
 		}
 	}
 

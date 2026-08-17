@@ -166,11 +166,14 @@ a fake clock instead of racing real timers.
 
 ```
 reap        expired leases return to pending
+purge       settled runs past the retention cutoff are deleted
 materialize schedules that have come due become runs
 claim       take up to concurrency due runs, under lease
 dispatch    run each handler
 settle      succeeded, retried with backoff, or dead
 ```
+
+`start` additionally runs a lease renewal loop beside this one.
 
 ### Retries
 
@@ -213,10 +216,56 @@ It is also what makes double execution possible.
 > before its settle call, so handlers must be idempotent. No store fixes this. It
 > is a property of running work outside the transaction that records it.
 
-A handler that may outlive its lease has to call `ctx.heartbeat()` periodically,
-otherwise the reaper hands its run to someone else while it is still running.
-Heartbeat returns false when the lease is already gone, at which point the
-handler should stop.
+`start` renews the leases of in flight runs for you, every `heartbeatMs`, which
+defaults to a third of the lease so two renewals can be missed before one lapses.
+Renewal runs alongside the tick loop rather than inside it, because a tick is
+blocked on the very handlers that need renewing.
+
+`ctx.heartbeat()` is still there for a handler that wants to check in explicitly.
+It returns false when the lease is already gone, at which point the handler
+should stop, because another worker has taken the run.
+
+A worker driven by bare `tick` calls does not renew. That is deliberate, and
+there is a test for it.
+
+### Mixed fleets
+
+By default a worker claims only runs whose handler it has registered, so in a
+fleet where different processes run different jobs, a run waits for a process
+that can actually execute it instead of being claimed and failed by one that
+cannot.
+
+Set `claimOnlyRegisteredHandlers` to false to have a worker claim everything and
+dead letter what it cannot run. That is the right choice when one process owns
+every handler and an unknown name means a bug rather than a routing question.
+
+### Retention
+
+Settled runs accumulate forever unless something deletes them. The partial
+indexes keep the hot paths fast regardless, but the table still grows.
+
+```ts
+new Worker({ store, registry, retention: { afterMs: 7 * 86_400_000, everyMs: 3_600_000 } });
+```
+
+Succeeded runs only, unless `includeDead` is set. A dead run is evidence that
+something never ran, and deleting it loses the only record of that. Sweeps are
+batched, so a long backlog clears over several passes rather than one statement
+locking the table.
+
+Set `afterMs` comfortably longer than the period of anything you schedule.
+Purging a run drops its idempotency key with it, so a schedule that later
+re-materializes the same occurrence would be free to enqueue it again.
+
+### Metrics
+
+```ts
+const { pending, leased, succeeded, dead, oldestPendingAgeMs } = await worker.stats();
+```
+
+Alert on `oldestPendingAgeMs`. Queue depth lies, because a large batch looks
+exactly like an outage, whereas a rising oldest age only ever means work is not
+being picked up.
 
 ## Storing schedules
 
@@ -379,15 +428,15 @@ dotnet run --project examples/dotnet/SchedulerExample
 ## Tests
 
 ```bash
-npm test                                              # TypeScript, 161 tests
+npm test                                              # TypeScript, 171 tests
 
 cd aspnet/Tide.Asgard.AspNetCore
-dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 161 tests
+dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 171 tests
 ```
 
 The Postgres tests need a real database, because the two properties that matter,
 `SKIP LOCKED` and single statement atomicity, cannot be faked. Point them at a
-throwaway database and both suites grow to 180:
+throwaway database and both suites grow to 199:
 
 ```bash
 export SCHEDULER_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/scheduler_test
@@ -420,7 +469,10 @@ fixture through storage and asserting the restored spec produces identical fire
 times, which covers every expression shape rather than a hand picked few.
 
 Worker tests run on a fake clock, so retries, leases and catch up are exercised
-without any waiting.
+without any waiting. The exception is lease renewal, which is about elapsed time
+relative to a lease and so runs on the real clock with short intervals. It comes
+with its control: the same scenario driven by bare ticks, asserting the lease
+does lapse and another worker does steal the run.
 
 DST fixtures cover both hemispheres, both policies for each case, and
 `Australia/Lord_Howe`, whose transition is 30 minutes rather than a whole hour.
@@ -467,27 +519,16 @@ TypeScript needs no split, because the store there accepts any object with a
 
 ## Not built yet
 
-Jobs are durable now. What is left is mostly operational.
+Jobs are durable, leases renew themselves, mixed fleets route correctly and old
+rows get cleaned up. What is left:
 
 1. **Durable schedules.** Schedules live in the worker's memory and are
-   re-registered in code at startup. Runs they materialize are durable, and the
+   registered in code at startup. Runs they materialize are durable, and the
    idempotency key stops two replicas materializing the same occurrence twice, so
    this is not a correctness gap. But a schedules table holding the spec,
-   `next_fire_at` and an enabled flag is what would let an admin surface pause
-   and resume them, and let a schedule be added without a deploy.
-2. **Automatic heartbeat.** Long handlers must call `ctx.heartbeat()` themselves
-   or risk the reaper handing their run to another worker mid flight. A
-   background heartbeat for the duration of a dispatch would remove the footgun.
-3. **Claim filtering by handler.** A worker dead letters a run whose handler it
-   does not know. In a mixed fleet it should decline to claim it and leave it for
-   a worker that does, which means passing the registered names into the claim
-   query.
-4. **Retention.** Settled runs accumulate forever. The partial indexes keep the
-   hot paths fast regardless, but something has to delete old succeeded rows.
-5. **Admin surface.** Trigger now, pause, cancel, requeue dead.
-6. **Observability.** The signal worth alerting on is the age of the oldest
-   pending run, not queue depth or error rate. Queue depth lies, since a large
-   batch looks identical to an outage.
-7. **Notify instead of poll.** Polling every second is fine to thousands of jobs
+   `next_fire_at` and an enabled flag is what would let a schedule be paused,
+   resumed or added without a deploy. It is the prerequisite for the next item.
+2. **Admin surface.** Trigger now, pause, cancel, requeue dead.
+3. **Notify instead of poll.** Polling every second is fine to thousands of jobs
    a second. `LISTEN`/`NOTIFY` on insert would cut latency without raising the
    poll rate, but it is an optimisation rather than a gap.

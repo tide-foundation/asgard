@@ -3,6 +3,13 @@
 
 namespace Tide.Asgard.Scheduler.Execution;
 
+// OldestPendingAgeMs is the age of the oldest run that is due and still waiting.
+// This is the number worth alerting on: queue depth lies, because a large batch
+// looks exactly like an outage, whereas a rising oldest age only ever means work
+// is not being picked up.
+public sealed record JobStoreStats(
+	int Pending, int Leased, int Succeeded, int Dead, long OldestPendingAgeMs);
+
 // The seam between the scheduler and whatever database the host already uses.
 // Implementing this is the only work needed to make the scheduler durable, and
 // it is why the scheduler itself has no database dependency.
@@ -20,8 +27,14 @@ public interface IJobStore
 	// leases. A durable implementation does this in a single statement, for
 	// Postgres an UPDATE over a SELECT ... FOR UPDATE SKIP LOCKED, so that
 	// concurrent workers never claim the same run.
+	//
+	// When handlers is given, only runs for those handler names are claimed. A
+	// worker passes what it has registered, so in a mixed fleet a run is left for
+	// a process that can actually execute it rather than being claimed and failed
+	// by one that cannot.
 	Task<IReadOnlyList<JobRun>> ClaimDueAsync(
-		string owner, long nowMs, long leaseMs, int max, CancellationToken ct = default);
+		string owner, long nowMs, long leaseMs, int max,
+		IReadOnlyCollection<string>? handlers = null, CancellationToken ct = default);
 
 	// Extends a lease while a handler is still working. Returns false when the
 	// lease was already lost, which means the reaper has handed the run to
@@ -46,6 +59,16 @@ public interface IJobStore
 	// a crashed worker recoverable, and also what makes double execution
 	// possible, hence the at-least-once contract.
 	Task<int> ReapExpiredAsync(long nowMs, CancellationToken ct = default);
+
+	// Deletes settled runs that finished before beforeMs, at most limit at a time
+	// so a long backlog is cleared in bounded chunks rather than one statement
+	// holding a lock over the whole table. Succeeded runs only by default: a dead
+	// run is evidence, and deleting it silently loses the only record that
+	// something never ran.
+	Task<int> PurgeSettledAsync(
+		long beforeMs, int limit, bool includeDead = false, CancellationToken ct = default);
+
+	Task<JobStoreStats> StatsAsync(long nowMs, CancellationToken ct = default);
 
 	Task<JobRun?> GetAsync(string runId, CancellationToken ct = default);
 }

@@ -168,12 +168,33 @@ describe("worker: one off jobs", () => {
         assert.equal(runs, 1);
     });
 
-    test("an unknown handler goes straight to dead", async () => {
+    test("a run for an unregistered handler is left alone, not claimed", async () => {
         const { store, worker } = harness();
         await worker.enqueue("missing");
 
         const result = await worker.tick();
-        assert.equal(result.dead, 1);
+        assert.equal(result.claimed, 0, "another worker may be able to run it");
+        assert.equal(store.countByStatus(JobStatus.Pending), 1);
+    });
+
+    test("only registered handlers are claimed when others are due", async () => {
+        const { store, registry, worker } = harness();
+        registry.register("known", () => { });
+
+        await worker.enqueue("missing");
+        await worker.enqueue("known");
+
+        const result = await worker.tick();
+        assert.equal(result.claimed, 1);
+        assert.equal(result.succeeded, 1);
+        assert.equal(store.countByStatus(JobStatus.Pending), 1, "the unknown one still waits");
+    });
+
+    test("with filtering off an unknown handler goes to dead", async () => {
+        const { store, worker } = harness({ claimOnlyRegisteredHandlers: false });
+        await worker.enqueue("missing");
+
+        assert.equal((await worker.tick()).dead, 1);
 
         const [run] = store.byStatus(JobStatus.Dead);
         assert.match(run.lastError, /no handler registered/);
@@ -332,6 +353,157 @@ describe("worker: recurring schedules", () => {
         assert.equal(first.materialized, 1);
         assert.equal(second.materialized, 0, "the idempotency key discarded the duplicate");
         assert.equal(store.all().length, 1);
+    });
+});
+
+describe("retention", () => {
+    test("purges settled runs past the cutoff and leaves the rest", async () => {
+        const store = new InMemoryJobStore();
+
+        const old = await store.enqueue({ handler: "h", runAtMs: T0 });
+        const recent = await store.enqueue({ handler: "h", runAtMs: T0 });
+        const pending = await store.enqueue({ handler: "h", runAtMs: T0 });
+
+        await store.complete(old.id, null, T0);
+        await store.complete(recent.id, null, T0 + 10_000);
+
+        assert.equal(await store.purgeSettled(T0 + 5_000, 100), 1);
+        assert.equal(await store.get(old.id), null);
+        assert.notEqual(await store.get(recent.id), null);
+        assert.notEqual(await store.get(pending.id), null);
+    });
+
+    test("dead runs are kept unless asked for", async () => {
+        const store = new InMemoryJobStore();
+        const run = await store.enqueue({ handler: "h", runAtMs: T0 });
+        await store.deadLetter(run.id, "gave up", null, T0);
+
+        assert.equal(await store.purgeSettled(T0 + 5_000, 100), 0);
+        assert.equal(await store.purgeSettled(T0 + 5_000, 100, true), 1);
+    });
+
+    test("the batch limit bounds a single sweep", async () => {
+        const store = new InMemoryJobStore();
+        for (let i = 0; i < 5; i++) {
+            const run = await store.enqueue({ handler: "h", runAtMs: T0 });
+            await store.complete(run.id, null, T0);
+        }
+
+        assert.equal(await store.purgeSettled(T0 + 1, 2), 2);
+        assert.equal(await store.purgeSettled(T0 + 1, 2), 2);
+        assert.equal(await store.purgeSettled(T0 + 1, 2), 1);
+        assert.equal(await store.purgeSettled(T0 + 1, 2), 0);
+    });
+
+    test("the worker sweeps on its own interval", async () => {
+        const { clock, store, registry, worker } = harness({
+            retention: { afterMs: 60_000, everyMs: 30_000 }
+        });
+        registry.register("done", () => { });
+
+        await worker.enqueue("done");
+        await worker.tick();
+        assert.equal(store.countByStatus(JobStatus.Succeeded), 1);
+
+        // Not old enough yet, and the sweep interval has not come round either.
+        clock.advance(30_000);
+        assert.equal((await worker.tick()).purged, 0);
+
+        clock.advance(61_000);
+        assert.equal((await worker.tick()).purged, 1);
+        assert.equal(store.all().length, 0);
+    });
+});
+
+describe("stats", () => {
+    test("counts by status and reports the oldest waiting run", async () => {
+        const store = new InMemoryJobStore();
+
+        await store.enqueue({ handler: "h", runAtMs: T0 });
+        await store.enqueue({ handler: "h", runAtMs: T0 + 5_000 });
+        const done = await store.enqueue({ handler: "h", runAtMs: T0 });
+        await store.complete(done.id, null, T0);
+
+        const stats = await store.stats(T0 + 10_000);
+        assert.equal(stats.pending, 2);
+        assert.equal(stats.succeeded, 1);
+        assert.equal(stats.dead, 0);
+        assert.equal(stats.oldestPendingAgeMs, 10_000);
+    });
+
+    test("a run that is not due yet does not count as waiting", async () => {
+        const store = new InMemoryJobStore();
+        await store.enqueue({ handler: "h", runAtMs: T0 + 60_000 });
+
+        const stats = await store.stats(T0);
+        assert.equal(stats.pending, 1);
+        assert.equal(stats.oldestPendingAgeMs, 0);
+    });
+});
+
+// These run on the real clock because they are about elapsed time relative to a
+// lease. Timings are kept small and the margins are wide.
+describe("automatic lease renewal", () => {
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    function slowHandlerSetup() {
+        const store = new InMemoryJobStore();
+
+        const busy = new HandlerRegistry();
+        const state = { finished: false, stolen: 0 };
+        busy.register("slow", async () => {
+            await wait(600);
+            state.finished = true;
+        });
+
+        const thief = new HandlerRegistry();
+        thief.register("slow", () => { state.stolen += 1; });
+
+        return { store, busy, thief, state };
+    }
+
+    test("start keeps the lease alive for as long as the handler runs", async () => {
+        const { store, busy, thief, state } = slowHandlerSetup();
+
+        const owner = new Worker({
+            store, registry: busy, owner: "owner",
+            leaseMs: 200, heartbeatMs: 50, pollIntervalMs: 20
+        });
+        const other = new Worker({ store, registry: thief, owner: "other", leaseMs: 200 });
+
+        await owner.enqueue("slow");
+        owner.start();
+
+        // Well past the lease, so without renewal this would already be stealable.
+        await wait(350);
+        await other.tick();
+
+        await wait(500);
+        await owner.stop();
+
+        assert.equal(state.finished, true);
+        assert.equal(state.stolen, 0, "the lease was renewed, so nobody could take it");
+    });
+
+    test("a bare tick does not renew, and the lease lapses", async () => {
+        const { store, busy, thief, state } = slowHandlerSetup();
+
+        const owner = new Worker({ store, registry: busy, owner: "owner", leaseMs: 200 });
+        const other = new Worker({ store, registry: thief, owner: "other", leaseMs: 200 });
+
+        await owner.enqueue("slow");
+
+        // Deliberately not awaited: tick is blocked on the handler, which is
+        // exactly why renewal cannot live inside it.
+        const ticking = owner.tick();
+
+        await wait(350);
+        const result = await other.tick();
+
+        assert.equal(result.reaped, 1, "the lease expired while the handler was still working");
+        assert.equal(state.stolen, 1, "and another worker picked the run up");
+
+        await ticking;
     });
 });
 

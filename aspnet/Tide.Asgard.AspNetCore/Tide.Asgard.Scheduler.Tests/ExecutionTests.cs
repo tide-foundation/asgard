@@ -23,7 +23,10 @@ internal static class ExecutionTests
 		FakeClock Clock, InMemoryJobStore Store, HandlerRegistry Registry, Worker Worker);
 
 	private static Harness NewHarness(
-		Action<Exception, JobRun?>? onError = null, long pollIntervalMs = 1_000)
+		Action<Exception, JobRun?>? onError = null,
+		long pollIntervalMs = 1_000,
+		bool claimOnlyRegisteredHandlers = true,
+		RetentionPolicy? retention = null)
 	{
 		var clock = new FakeClock(T0);
 		var store = new InMemoryJobStore();
@@ -36,6 +39,8 @@ internal static class ExecutionTests
 			Owner = "test",
 			LeaseMs = 30_000,
 			PollIntervalMs = pollIntervalMs,
+			ClaimOnlyRegisteredHandlers = claimOnlyRegisteredHandlers,
+			Retention = retention,
 			Retry = NoJitter,
 			Random = () => 0.5,
 			OnError = onError
@@ -50,7 +55,188 @@ internal static class ExecutionTests
 		OneOffJobs(runner);
 		FailureHandling(runner);
 		RecurringSchedules(runner);
+		Retention(runner);
+		Stats(runner);
+		LeaseRenewal(runner);
 		Lifecycle(runner);
+	}
+
+	private static void Retention(TestRunner runner)
+	{
+		runner.Suite("retention");
+
+		runner.TestAsync("purges settled runs past the cutoff and leaves the rest", async () =>
+		{
+			var store = new InMemoryJobStore();
+
+			var old = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+			var recent = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+			var pending = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+
+			await store.CompleteAsync(old!.Id, null, T0);
+			await store.CompleteAsync(recent!.Id, null, T0 + 10_000);
+
+			Assert.Equal(1, await store.PurgeSettledAsync(T0 + 5_000, 100));
+			Assert.True(await store.GetAsync(old.Id) is null, "the old run should be gone");
+			Assert.True(await store.GetAsync(recent.Id) is not null, "the recent run should remain");
+			Assert.True(await store.GetAsync(pending!.Id) is not null, "the pending run should remain");
+		});
+
+		runner.TestAsync("dead runs are kept unless asked for", async () =>
+		{
+			var store = new InMemoryJobStore();
+			var run = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+			await store.DeadLetterAsync(run!.Id, "gave up", null, T0);
+
+			Assert.Equal(0, await store.PurgeSettledAsync(T0 + 5_000, 100));
+			Assert.Equal(1, await store.PurgeSettledAsync(T0 + 5_000, 100, includeDead: true));
+		});
+
+		runner.TestAsync("the batch limit bounds a single sweep", async () =>
+		{
+			var store = new InMemoryJobStore();
+			for (var i = 0; i < 5; i++)
+			{
+				var run = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+				await store.CompleteAsync(run!.Id, null, T0);
+			}
+
+			Assert.Equal(2, await store.PurgeSettledAsync(T0 + 1, 2));
+			Assert.Equal(2, await store.PurgeSettledAsync(T0 + 1, 2));
+			Assert.Equal(1, await store.PurgeSettledAsync(T0 + 1, 2));
+			Assert.Equal(0, await store.PurgeSettledAsync(T0 + 1, 2));
+		});
+
+		runner.TestAsync("the worker sweeps on its own interval", async () =>
+		{
+			var h = NewHarness(retention: new RetentionPolicy { AfterMs = 60_000, EveryMs = 30_000 });
+			h.Registry.Register("done", (_, _) => { });
+
+			await h.Worker.EnqueueAsync("done");
+			await h.Worker.TickAsync();
+			Assert.Equal(1, h.Store.CountByStatus(JobStatus.Succeeded));
+
+			// Not old enough yet, and the sweep interval has not come round either.
+			h.Clock.Advance(30_000);
+			Assert.Equal(0, (await h.Worker.TickAsync()).Purged);
+
+			h.Clock.Advance(61_000);
+			Assert.Equal(1, (await h.Worker.TickAsync()).Purged);
+			Assert.Equal(0, h.Store.All().Count);
+		});
+	}
+
+	private static void Stats(TestRunner runner)
+	{
+		runner.Suite("stats");
+
+		runner.TestAsync("counts by status and reports the oldest waiting run", async () =>
+		{
+			var store = new InMemoryJobStore();
+
+			await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+			await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 + 5_000 });
+			var done = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+			await store.CompleteAsync(done!.Id, null, T0);
+
+			var stats = await store.StatsAsync(T0 + 10_000);
+			Assert.Equal(2, stats.Pending);
+			Assert.Equal(1, stats.Succeeded);
+			Assert.Equal(0, stats.Dead);
+			Assert.Equal(10_000L, stats.OldestPendingAgeMs);
+		});
+
+		runner.TestAsync("a run that is not due yet does not count as waiting", async () =>
+		{
+			var store = new InMemoryJobStore();
+			await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 + 60_000 });
+
+			var stats = await store.StatsAsync(T0);
+			Assert.Equal(1, stats.Pending);
+			Assert.Equal(0L, stats.OldestPendingAgeMs);
+		});
+	}
+
+	// These run on the real clock because they are about elapsed time relative to
+	// a lease. Timings are kept small and the margins are wide.
+	private static void LeaseRenewal(TestRunner runner)
+	{
+		runner.Suite("automatic lease renewal");
+
+		runner.TestAsync("Start keeps the lease alive for as long as the handler runs", async () =>
+		{
+			var store = new InMemoryJobStore();
+			var finished = false;
+			var stolen = 0;
+
+			var busy = new HandlerRegistry();
+			busy.Register("slow", async (_, _) =>
+			{
+				await Task.Delay(600);
+				finished = true;
+			});
+
+			var thief = new HandlerRegistry();
+			thief.Register("slow", (_, _) => Interlocked.Increment(ref stolen));
+
+			await using var owner = new Worker(new WorkerOptions
+			{
+				Store = store, Registry = busy, Owner = "owner",
+				LeaseMs = 200, HeartbeatMs = 50, PollIntervalMs = 20
+			});
+			await using var other = new Worker(new WorkerOptions
+			{
+				Store = store, Registry = thief, Owner = "other", LeaseMs = 200
+			});
+
+			await owner.EnqueueAsync("slow");
+			owner.Start();
+
+			// Well past the lease, so without renewal this would already be stealable.
+			await Task.Delay(350);
+			await other.TickAsync();
+
+			await Task.Delay(500);
+			await owner.StopAsync();
+
+			Assert.Equal(true, finished);
+			Assert.Equal(0, stolen, "the lease was renewed, so nobody could take it");
+		});
+
+		runner.TestAsync("a bare tick does not renew, and the lease lapses", async () =>
+		{
+			var store = new InMemoryJobStore();
+			var stolen = 0;
+
+			var busy = new HandlerRegistry();
+			busy.Register("slow", async (_, _) => await Task.Delay(600));
+
+			var thief = new HandlerRegistry();
+			thief.Register("slow", (_, _) => Interlocked.Increment(ref stolen));
+
+			await using var owner = new Worker(new WorkerOptions
+			{
+				Store = store, Registry = busy, Owner = "owner", LeaseMs = 200
+			});
+			await using var other = new Worker(new WorkerOptions
+			{
+				Store = store, Registry = thief, Owner = "other", LeaseMs = 200
+			});
+
+			await owner.EnqueueAsync("slow");
+
+			// Deliberately not awaited: the tick is blocked on the handler, which
+			// is exactly why renewal cannot live inside it.
+			var ticking = owner.TickAsync();
+
+			await Task.Delay(350);
+			var result = await other.TickAsync();
+
+			Assert.Equal(1, result.Reaped, "the lease expired while the handler was still working");
+			Assert.Equal(1, stolen, "and another worker picked the run up");
+
+			await ticking;
+		});
 	}
 
 	private static void RetryBackoff(TestRunner runner)
@@ -205,9 +391,32 @@ internal static class ExecutionTests
 			Assert.Equal(1, runs);
 		});
 
-		runner.TestAsync("an unknown handler goes straight to dead", async () =>
+		runner.TestAsync("a run for an unregistered handler is left alone, not claimed", async () =>
 		{
 			var h = NewHarness();
+			await h.Worker.EnqueueAsync("missing");
+
+			Assert.Equal(0, (await h.Worker.TickAsync()).Claimed, "another worker may be able to run it");
+			Assert.Equal(1, h.Store.CountByStatus(JobStatus.Pending));
+		});
+
+		runner.TestAsync("only registered handlers are claimed when others are due", async () =>
+		{
+			var h = NewHarness();
+			h.Registry.Register("known", (_, _) => { });
+
+			await h.Worker.EnqueueAsync("missing");
+			await h.Worker.EnqueueAsync("known");
+
+			var result = await h.Worker.TickAsync();
+			Assert.Equal(1, result.Claimed);
+			Assert.Equal(1, result.Succeeded);
+			Assert.Equal(1, h.Store.CountByStatus(JobStatus.Pending), "the unknown one still waits");
+		});
+
+		runner.TestAsync("with filtering off an unknown handler goes to dead", async () =>
+		{
+			var h = NewHarness(claimOnlyRegisteredHandlers: false);
 			await h.Worker.EnqueueAsync("missing");
 
 			Assert.Equal(1, (await h.Worker.TickAsync()).Dead);

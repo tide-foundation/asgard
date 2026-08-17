@@ -3,6 +3,18 @@
 
 import { JobRun, JobRunRequest } from "./JobRun";
 
+export interface JobStoreStats {
+    readonly pending: number;
+    readonly leased: number;
+    readonly succeeded: number;
+    readonly dead: number;
+    // Age of the oldest run that is due and still waiting. This is the number
+    // worth alerting on: queue depth lies, because a large batch looks exactly
+    // like an outage, whereas a rising oldest age only ever means work is not
+    // being picked up.
+    readonly oldestPendingAgeMs: number;
+}
+
 // The seam between the scheduler and whatever database the host already uses.
 // Implementing this is the only work needed to make the scheduler durable, and
 // it is why the scheduler itself has no database dependency.
@@ -19,7 +31,18 @@ export interface JobStore {
     // leases. A durable implementation does this in a single statement, for
     // Postgres an UPDATE over a SELECT ... FOR UPDATE SKIP LOCKED, so that
     // concurrent workers never claim the same run.
-    claimDue(owner: string, nowMs: number, leaseMs: number, max: number): Promise<JobRun[]>;
+    //
+    // When handlers is given, only runs for those handler names are claimed. A
+    // worker passes what it has registered, so in a mixed fleet a run is left
+    // for a process that can actually execute it rather than being claimed and
+    // failed by one that cannot.
+    claimDue(
+        owner: string,
+        nowMs: number,
+        leaseMs: number,
+        max: number,
+        handlers?: readonly string[]
+    ): Promise<JobRun[]>;
 
     // Extends a lease while a handler is still working. Returns false when the
     // lease was already lost, which means the reaper has handed the run to
@@ -43,6 +66,15 @@ export interface JobStore {
     // a crashed worker recoverable, and also what makes double execution
     // possible, hence the at-least-once contract.
     reapExpired(nowMs: number): Promise<number>;
+
+    // Deletes settled runs that finished before beforeMs, at most limit at a
+    // time so a long backlog is cleared in bounded chunks rather than one
+    // statement holding a lock over the whole table. Succeeded runs only by
+    // default: a dead run is evidence, and deleting it silently loses the only
+    // record that something never ran.
+    purgeSettled(beforeMs: number, limit: number, includeDead?: boolean): Promise<number>;
+
+    stats(nowMs: number): Promise<JobStoreStats>;
 
     get(runId: string): Promise<JobRun | null>;
 }
