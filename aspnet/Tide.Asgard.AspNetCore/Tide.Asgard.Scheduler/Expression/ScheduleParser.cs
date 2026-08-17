@@ -152,6 +152,13 @@ public static class ScheduleParser
 			var eq = t.Text.IndexOf('=');
 			if (eq < 0)
 			{
+				// A bare HH:MM is shorthand for the hour and minute fields, since a
+				// daily time is by far the most common schedule.
+				if (t.Text.Contains(':'))
+				{
+					ExpandTimeLiteral(t, fields);
+					continue;
+				}
 				throw new ScheduleParseException(
 					ScheduleErrorCode.UnknownField, t.Offset, $"expected name=value, got '{t.Text}'");
 			}
@@ -282,6 +289,40 @@ public static class ScheduleParser
 			DstGap = dstGap,
 			DstFold = dstFold
 		};
+	}
+
+	// Rewrites HH:MM or HH:MM:SS into the fields it stands for, so the rest of the
+	// parser and the defaulting rule see no difference between "on 09:30" and
+	// "on hour=9 minute=30".
+	private static void ExpandTimeLiteral(Token t, Dictionary<string, RawField> fields)
+	{
+		var parts = t.Text.Split(':');
+		if (parts.Length is < 2 or > 3)
+		{
+			throw new ScheduleParseException(
+				ScheduleErrorCode.BadValue, t.Offset, $"expected HH:MM or HH:MM:SS, got '{t.Text}'");
+		}
+
+		string[] names = ["hour", "minute", "second"];
+		var cursor = 0;
+
+		for (var i = 0; i < parts.Length; i++)
+		{
+			var offset = t.Offset + cursor;
+			cursor += parts[i].Length + 1;
+
+			if (parts[i].Length is < 1 or > 2 || !parts[i].All(char.IsAsciiDigit))
+			{
+				throw new ScheduleParseException(
+					ScheduleErrorCode.BadValue, offset, $"'{parts[i]}' is not a valid {names[i]}");
+			}
+			if (fields.ContainsKey(names[i]))
+			{
+				throw new ScheduleParseException(
+					ScheduleErrorCode.DuplicateField, t.Offset, $"field '{names[i]}' set twice");
+			}
+			fields[names[i]] = new RawField(parts[i], offset, t);
+		}
 	}
 
 	private static RawField? Get(Dictionary<string, RawField> fields, string name)

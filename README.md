@@ -18,6 +18,8 @@ The .NET solution lives at [aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln](aspne
 | [Tide.Asgard.AspNetCore.Authentication](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/) | Main SDK — service-collection extensions, Ed25519 helpers, token exchange |
 | [Tide.Asgard.Core](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/) | Cryptography primitives (Ed25519 / EdDSA) |
 | [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) | End-to-end working sample |
+| [Tide.Asgard.Scheduler](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler/) | Task scheduling: schedule expression parser and occurrence evaluator |
+| [Tide.Asgard.Scheduler.Tests](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler.Tests/) | Scheduler test suite, no test framework required |
 
 The SDK is currently consumed via `<ProjectReference>` — see [Tide.Asgard.AspNetCore.Example.csproj](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/Tide.Asgard.AspNetCore.Example.csproj) for the wiring.
 
@@ -190,6 +192,26 @@ public class HelloController(ITokenExchangeService exchangeService) : Controller
 	}
 }
 ```
+
+## Task scheduler
+
+Asgard ships a schedule expression language with matching TypeScript and .NET
+implementations, so both runtimes agree on when a job should next run. Neither
+takes a third party dependency.
+
+```ts
+const spec = parseSchedule("on 09:30 dow=mon-fri tz=Australia/Sydney");
+const next = nextFire(spec, Date.now());
+```
+
+```csharp
+var spec = ScheduleParser.Parse("on 09:30 dow=mon-fri tz=Australia/Sydney");
+long? next = ScheduleEvaluator.NextFire(spec, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+```
+
+See [docs/task-scheduler.md](docs/task-scheduler.md) for the language reference,
+recipes, and what is still to be built. Runnable examples live in
+[examples/](examples/).
 
 ## License
 

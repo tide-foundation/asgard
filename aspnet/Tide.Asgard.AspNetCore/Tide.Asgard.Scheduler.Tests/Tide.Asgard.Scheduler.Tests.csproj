@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <RootNamespace>Tide.Asgard.Scheduler.FixtureRunner</RootNamespace>
+    <RootNamespace>Tide.Asgard.Scheduler.Tests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

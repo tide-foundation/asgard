@@ -118,6 +118,54 @@
       "expect": [null]
     },
     {
+      "name": "time literal is shorthand for hour and minute",
+      "expr": "on 09:30",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-08-17T09:30:00Z", "2026-08-18T09:30:00Z"]
+    },
+    {
+      "name": "time literal with seconds",
+      "expr": "on 09:30:15",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-08-17T09:30:15Z", "2026-08-18T09:30:15Z"]
+    },
+    {
+      "name": "time literal combines with other fields",
+      "expr": "on 09:30 dow=mon,wed,fri",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-08-17T09:30:00Z", "2026-08-19T09:30:00Z", "2026-08-21T09:30:00Z"]
+    },
+    {
+      "name": "leap day fires only in leap years",
+      "expr": "on day=29 month=2",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2028-02-29T00:00:00Z", "2032-02-29T00:00:00Z"]
+    },
+    {
+      "name": "leap day across a century that skips one",
+      "expr": "on day=29 month=2",
+      "after": "2096-03-01T00:00:00Z",
+      "expect": ["2104-02-29T00:00:00Z"]
+    },
+    {
+      "name": "day=31 skips months that are too short",
+      "expr": "on day=31",
+      "after": "2026-01-31T12:00:00Z",
+      "expect": ["2026-03-31T00:00:00Z", "2026-05-31T00:00:00Z"]
+    },
+    {
+      "name": "day=last in february tracks the leap year",
+      "expr": "on day=last month=2",
+      "after": "2027-03-01T00:00:00Z",
+      "expect": ["2028-02-29T00:00:00Z", "2029-02-28T00:00:00Z"]
+    },
+    {
+      "name": "fifth weekday occurrence is rare but reachable",
+      "expr": "on nth=5 dow=fri month=2",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2036-02-29T00:00:00Z"]
+    },
+    {
       "name": "timezone with no transition in range",
       "expr": "on hour=9 minute=30 dow=mon,wed,fri tz=Australia/Sydney",
       "after": "2026-08-17T00:00:00Z",
@@ -216,6 +264,10 @@
     { "name": "unknown duration unit", "expr": "every 5x", "code": "E_BAD_DURATION", "offset": 7 },
     { "name": "duration units out of order", "expr": "every 30m1h", "code": "E_BAD_DURATION", "offset": 10 },
     { "name": "bad instant", "expr": "at nonsense", "code": "E_BAD_INSTANT", "offset": 3 },
-    { "name": "trailing tokens", "expr": "at 2026-09-01T03:00:00Z extra", "code": "E_TRAILING", "offset": 24 }
+    { "name": "trailing tokens", "expr": "at 2026-09-01T03:00:00Z extra", "code": "E_TRAILING", "offset": 24 },
+    { "name": "time literal out of range", "expr": "on 25:00", "code": "E_VALUE_RANGE", "offset": 3 },
+    { "name": "time literal with a bad segment", "expr": "on 09:xx", "code": "E_BAD_VALUE", "offset": 6 },
+    { "name": "time literal with too many segments", "expr": "on 09:30:15:20", "code": "E_BAD_VALUE", "offset": 3 },
+    { "name": "time literal colliding with an explicit field", "expr": "on 09:30 hour=3", "code": "E_DUPLICATE_FIELD", "offset": 9 }
   ]
 }

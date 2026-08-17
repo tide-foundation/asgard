@@ -6,8 +6,12 @@ namespace Tide.Asgard.Scheduler.Expression;
 public static class ScheduleEvaluator
 {
 	// A calendar spec can legitimately never fire again, for example day=30 with
-	// month=2. Cap the search rather than looping forever.
-	private const int HorizonYears = 5;
+	// month=2, so the search needs a bound. The Gregorian calendar repeats exactly
+	// every 400 years, weekday alignment included, so anything that has not fired
+	// within one cycle never will. A shorter horizon would be a guess: day=29
+	// month=2 already has an 8 year gap across a century that skips its leap day,
+	// and nth=5 in February is rarer still.
+	private const int HorizonYears = 400;
 	private const int MaxIterations = 200_000;
 
 	// How far past a spring forward gap to look for the moment the clock resumes.

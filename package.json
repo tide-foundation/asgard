@@ -17,7 +17,7 @@
     "build": "npm run build:cjs && npm run build:esm",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "test": "npm run build:cjs && node tests/ts/run-fixtures.js"
+    "test": "npm run build:cjs && node --test tests/ts/fixtures.test.js tests/ts/expression.test.js"
   },
   "files": [
     "dist"

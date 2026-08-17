@@ -125,6 +125,12 @@ function parseCalendar(tokens: Token[]): CalendarSpec {
         const t = tokens[i];
         const eq = t.text.indexOf("=");
         if (eq < 0) {
+            // A bare HH:MM is shorthand for the hour and minute fields, since a
+            // daily time is by far the most common schedule.
+            if (t.text.indexOf(":") >= 0) {
+                expandTimeLiteral(t, fields);
+                continue;
+            }
             throw new ScheduleParseError(
                 ScheduleErrorCode.UnknownField, t.offset,
                 `expected name=value, got '${t.text}'`);
@@ -233,6 +239,36 @@ function parseCalendar(tokens: Token[]): CalendarSpec {
         kind: "calendar",
         tz, second, minute, hour, day, dayLast, dow, nth, month, dstGap, dstFold
     };
+}
+
+// Rewrites HH:MM or HH:MM:SS into the fields it stands for, so the rest of the
+// parser and the defaulting rule see no difference between "on 09:30" and
+// "on hour=9 minute=30".
+function expandTimeLiteral(t: Token, fields: Map<string, RawField>): void {
+    const parts = t.text.split(":");
+    if (parts.length < 2 || parts.length > 3) {
+        throw new ScheduleParseError(
+            ScheduleErrorCode.BadValue, t.offset,
+            `expected HH:MM or HH:MM:SS, got '${t.text}'`);
+    }
+
+    const names = ["hour", "minute", "second"];
+    let cursor = 0;
+
+    for (let i = 0; i < parts.length; i++) {
+        const offset = t.offset + cursor;
+        cursor += parts[i].length + 1;
+
+        if (!/^\d{1,2}$/.test(parts[i])) {
+            throw new ScheduleParseError(
+                ScheduleErrorCode.BadValue, offset, `'${parts[i]}' is not a valid ${names[i]}`);
+        }
+        if (fields.has(names[i])) {
+            throw new ScheduleParseError(
+                ScheduleErrorCode.DuplicateField, t.offset, `field '${names[i]}' set twice`);
+        }
+        fields.set(names[i], { value: parts[i], valueOffset: offset, token: t });
+    }
 }
 
 const KNOWN_FIELDS = new Set([
