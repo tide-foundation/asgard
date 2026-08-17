@@ -25,6 +25,7 @@ export {
 export { JobRun, JobRunRequest, JobStatus } from "./execution/JobRun";
 export { JobStore } from "./execution/JobStore";
 export { InMemoryJobStore } from "./execution/InMemoryJobStore";
+export { PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL } from "./execution/PostgresJobStore";
 export { HandlerRegistry, JobContext, JobHandler } from "./execution/HandlerRegistry";
 export {
     Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy

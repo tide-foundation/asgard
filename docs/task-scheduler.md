@@ -9,8 +9,10 @@ It comes in two halves:
 - **Execution**: a store holds jobs, a worker claims them and runs handlers, with
   leases, retries and backoff.
 
-What is still missing is a durable store. Everything ships with an in memory one,
-so nothing survives a restart yet. See [not built yet](#not-built-yet).
+Two stores ship with it. `InMemoryJobStore` for local timers and tests, and
+`PostgresJobStore` for anything that has to survive a restart or coordinate
+across replicas. You supply a connection, the SDK supplies the schema and every
+query.
 
 ## Working out when something runs
 
@@ -119,6 +121,43 @@ worker.Start();
 Handlers are registered by **name**, not captured as closures, because a durable
 store holds a name and a payload rather than a function. That is also what lets a
 run enqueued by one process execute in another, including across runtimes.
+
+### Making it durable
+
+Swap the store. Nothing else changes: the same worker, handlers and schedules now
+survive restarts and coordinate across replicas.
+
+```ts
+import { Pool } from "pg";
+
+const store = new PostgresJobStore(new Pool({ connectionString }));
+await store.ensureSchema();
+```
+
+```csharp
+await using var store = PostgresJobStore.Create(connectionString);
+await store.EnsureSchemaAsync();
+```
+
+`ensureSchema` applies [`sql/scheduler-schema.sql`](../sql/scheduler-schema.sql).
+It is safe on every startup and safe from several processes at once, so there is
+no migration step to run by hand. If you would rather apply the DDL yourself, the
+file is the whole of it.
+
+The store takes a connection, not a driver choice. In .NET,
+`PostgresJobStore.Create` owns an `NpgsqlDataSource` for you, or pass one the
+application already has and keep ownership. In TypeScript it accepts anything
+with a `query` method, which is what a node-postgres `Pool` or `Client` already
+is, so the package itself depends on nothing.
+
+Two behaviours change once jobs are durable:
+
+- **Payloads round trip through `jsonb`.** A handler reading from Postgres gets
+  JSON back, not the object that was enqueued: a plain object in TypeScript, a
+  `JsonNode` in .NET.
+- **Claiming is genuinely concurrent.** `SELECT ... FOR UPDATE SKIP LOCKED` means
+  workers step over rows their peers hold rather than blocking, so adding
+  replicas adds throughput instead of contention.
 
 ### What a tick does
 
@@ -340,11 +379,29 @@ dotnet run --project examples/dotnet/SchedulerExample
 ## Tests
 
 ```bash
-npm test                                              # TypeScript, 160 tests
+npm test                                              # TypeScript, 161 tests
 
 cd aspnet/Tide.Asgard.AspNetCore
-dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 160 tests
+dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 161 tests
 ```
+
+The Postgres tests need a real database, because the two properties that matter,
+`SKIP LOCKED` and single statement atomicity, cannot be faked. Point them at a
+throwaway database and both suites grow to 180:
+
+```bash
+export SCHEDULER_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/scheduler_test
+npm test
+dotnet run --project Tide.Asgard.Scheduler.Tests
+```
+
+Without that variable they are skipped, so the default suite needs no database.
+The sharpest of them enqueues 200 runs, claims them from 8 concurrent workers,
+and asserts every run was claimed exactly once and none appeared twice.
+
+A drift check runs either way: each store embeds a copy of the schema and asserts
+it still matches `sql/scheduler-schema.sql`, so the two runtimes and the canonical
+file cannot diverge.
 
 Both suites run
 [`tests/fixtures/schedule-expression.json`](../tests/fixtures/schedule-expression.json),
@@ -383,9 +440,10 @@ src/scheduler/                                  TypeScript
     TimeZone.ts                                 only platform specific file
   execution/
     Clock.ts  RetryPolicy.ts  JobRun.ts  JobStore.ts
-    InMemoryJobStore.ts  HandlerRegistry.ts  Worker.ts
+    InMemoryJobStore.ts  PostgresJobStore.ts
+    HandlerRegistry.ts  Worker.ts
 
-aspnet/.../Tide.Asgard.Scheduler/               .NET
+aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
   Expression/
     Tokenizer.cs  ScheduleParser.cs  ScheduleSpec.cs  FieldSet.cs
     DurationParser.cs  ScheduleEvaluator.cs  ScheduleSpecJson.cs
@@ -393,34 +451,43 @@ aspnet/.../Tide.Asgard.Scheduler/               .NET
   Execution/
     Clock.cs  RetryPolicy.cs  JobRun.cs  IJobStore.cs
     InMemoryJobStore.cs  HandlerRegistry.cs  Worker.cs
+
+aspnet/.../Tide.Asgard.Scheduler.Postgres/      .NET, needs Npgsql
+  PostgresJobStore.cs
+
+sql/scheduler-schema.sql                        canonical DDL
 ```
 
 Everything outside the two timezone files is integer arithmetic running the same
 algorithm in both languages.
 
+The Postgres store is a separate .NET package so the core keeps no dependencies.
+TypeScript needs no split, because the store there accepts any object with a
+`query` method rather than importing a driver.
+
 ## Not built yet
 
-The only store is `InMemoryJobStore`, so today the scheduler is in process. Jobs
-are lost on restart and two replicas do not coordinate, beyond the idempotency
-key that stops them materializing the same occurrence twice through a shared
-store.
+Jobs are durable now. What is left is mostly operational.
 
-1. **A durable store.** The obvious one is Postgres: claim and lease with
-   `FOR UPDATE SKIP LOCKED`, a reaper for expired leases, and the
-   complete-and-chain transaction. `JobStore` is deliberately small so a host can
-   implement it against the database it already has, which is why the scheduler
-   itself has no database dependency. Whether we ship a Postgres implementation
-   or leave it to the host is still open.
-2. **Durable schedules.** Schedules currently live in the worker's memory and are
-   re-registered at startup. A durable store would keep them in a table with
-   their spec, `next_fire_at` and enabled flag, which is also what lets an admin
-   surface pause and resume them.
-3. **Automatic heartbeat.** Long handlers must call `ctx.heartbeat()` themselves.
-   A background heartbeat for the duration of a dispatch would remove that
-   footgun.
-4. **Claim filtering by handler.** A worker currently dead letters a run whose
-   handler it does not know. In a mixed fleet it should decline to claim it
-   instead, and leave it for a worker that does.
+1. **Durable schedules.** Schedules live in the worker's memory and are
+   re-registered in code at startup. Runs they materialize are durable, and the
+   idempotency key stops two replicas materializing the same occurrence twice, so
+   this is not a correctness gap. But a schedules table holding the spec,
+   `next_fire_at` and an enabled flag is what would let an admin surface pause
+   and resume them, and let a schedule be added without a deploy.
+2. **Automatic heartbeat.** Long handlers must call `ctx.heartbeat()` themselves
+   or risk the reaper handing their run to another worker mid flight. A
+   background heartbeat for the duration of a dispatch would remove the footgun.
+3. **Claim filtering by handler.** A worker dead letters a run whose handler it
+   does not know. In a mixed fleet it should decline to claim it and leave it for
+   a worker that does, which means passing the registered names into the claim
+   query.
+4. **Retention.** Settled runs accumulate forever. The partial indexes keep the
+   hot paths fast regardless, but something has to delete old succeeded rows.
 5. **Admin surface.** Trigger now, pause, cancel, requeue dead.
 6. **Observability.** The signal worth alerting on is the age of the oldest
-   pending run, not queue depth or error rate.
+   pending run, not queue depth or error rate. Queue depth lies, since a large
+   batch looks identical to an outage.
+7. **Notify instead of poll.** Polling every second is fine to thousands of jobs
+   a second. `LISTEN`/`NOTIFY` on insert would cut latency without raising the
+   poll rate, but it is an optimisation rather than a gap.

@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Tide.Asgard.Scheduler\Tide.Asgard.Scheduler.csproj" />
+    <ProjectReference Include="..\Tide.Asgard.Scheduler.Postgres\Tide.Asgard.Scheduler.Postgres.csproj" />
   </ItemGroup>
 
 </Project>

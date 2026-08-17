@@ -17,7 +17,7 @@
     "build": "npm run build:cjs && npm run build:esm",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "test": "npm run build:cjs && node --test tests/ts/fixtures.test.js tests/ts/expression.test.js tests/ts/serialization.test.js tests/ts/execution.test.js"
+    "test": "npm run build:cjs && node --test tests/ts/fixtures.test.js tests/ts/expression.test.js tests/ts/serialization.test.js tests/ts/execution.test.js tests/ts/postgres.test.js"
   },
   "files": [
     "dist"
@@ -37,6 +37,7 @@
   "homepage": "https://github.com/tide-foundation/asgard#readme",
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "pg": "^8.23.0",
     "typescript": "^5.9.3"
   }
 }
