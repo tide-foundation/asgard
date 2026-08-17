@@ -19,5 +19,7 @@ if (fixturePath is null)
 var runner = new TestRunner();
 FixtureTests.Run(runner, fixturePath);
 ExpressionTests.Run(runner);
+SerializationTests.Run(runner, fixturePath);
+ExecutionTests.Run(runner);
 
-return runner.Report("schedule expression tests");
+return runner.Report("scheduler tests");

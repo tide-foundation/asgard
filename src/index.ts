@@ -14,9 +14,23 @@ import { nextFire } from "./scheduler/expression/Evaluator";
 import { parseDuration, parseInstant } from "./scheduler/expression/Duration";
 import { ScheduleErrorCode, ScheduleParseError } from "./scheduler/expression/Errors";
 import {
+    specToJson, specFromJson, specToString, specFromString, SPEC_VERSION
+} from "./scheduler/expression/Serialization";
+import {
     CalendarSpec, DstFoldPolicy, DstGapPolicy, IntervalMode, IntervalSpec,
     OnceSpec, ScheduleSpec
 } from "./scheduler/expression/Spec";
+import { Clock, systemClock, FakeClock } from "./scheduler/execution/Clock";
+import {
+    JitterMode, RetryPolicy, DEFAULT_RETRY_POLICY, retryDelayMs, shouldRetry, PermanentJobError
+} from "./scheduler/execution/RetryPolicy";
+import { JobRun, JobRunRequest, JobStatus } from "./scheduler/execution/JobRun";
+import { JobStore } from "./scheduler/execution/JobStore";
+import { InMemoryJobStore } from "./scheduler/execution/InMemoryJobStore";
+import { HandlerRegistry, JobContext, JobHandler } from "./scheduler/execution/HandlerRegistry";
+import {
+    Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy
+} from "./scheduler/execution/Worker";
 
 export { GenericResourceAccessThresholdRoleContract }
 export { BaseContract };
@@ -27,4 +41,10 @@ export { GenericRealmAccessThresholdRoleContract }
 export { BasicCustomRequest, DynamicPayloadCustomRequest, DynamicPayloadApprovedCustomRequest }
 export { parseSchedule, nextFire, parseDuration, parseInstant }
 export { ScheduleErrorCode, ScheduleParseError }
+export { specToJson, specFromJson, specToString, specFromString, SPEC_VERSION }
 export { CalendarSpec, DstFoldPolicy, DstGapPolicy, IntervalMode, IntervalSpec, OnceSpec, ScheduleSpec }
+export { Clock, systemClock, FakeClock }
+export { JitterMode, RetryPolicy, DEFAULT_RETRY_POLICY, retryDelayMs, shouldRetry, PermanentJobError }
+export { JobRun, JobRunRequest, JobStatus, JobStore, InMemoryJobStore }
+export { HandlerRegistry, JobContext, JobHandler }
+export { Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy }

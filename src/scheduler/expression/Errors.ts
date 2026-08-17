@@ -18,7 +18,10 @@ export enum ScheduleErrorCode {
     UnknownTimeZone = "E_UNKNOWN_TIMEZONE",
     BadDuration = "E_BAD_DURATION",
     BadInstant = "E_BAD_INSTANT",
-    Trailing = "E_TRAILING"
+    Trailing = "E_TRAILING",
+    // Raised when reading a stored spec rather than an expression, so it carries
+    // no meaningful character offset.
+    BadSpec = "E_BAD_SPEC"
 }
 
 export class ScheduleParseError extends Error {

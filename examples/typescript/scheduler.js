@@ -10,8 +10,10 @@
 //   import { parseSchedule, nextFire, ScheduleParseError } from "asgard-tide";
 
 const path = require("node:path");
-const { parseSchedule, nextFire, ScheduleParseError } = require(
-    path.join(__dirname, "..", "..", "dist", "cjs", "index.js"));
+const {
+    parseSchedule, nextFire, ScheduleParseError,
+    HandlerRegistry, InMemoryJobStore, Worker, PermanentJobError, JobStatus
+} = require(path.join(__dirname, "..", "..", "dist", "cjs", "index.js"));
 
 // 1. Preview when a schedule will fire.
 //
@@ -61,30 +63,65 @@ for (const bad of ["on hour=25", "on day=1 dow=mon", "every 5x", "on nth=2 hour=
     }
 }
 
-// 3. Rerun a function on a schedule.
+// 3. Actually run jobs.
 //
-// In-process only. Nothing survives a restart and two replicas will both fire,
-// so use this for local timers rather than for work that must happen once.
+// A worker claims due work from a store and dispatches it to handlers looked up
+// by name. InMemoryJobStore keeps everything in the process, so nothing survives
+// a restart. Swap in a durable JobStore and the same worker coordinates across
+// replicas.
 
-async function runOnSchedule(expr, work, signal) {
-    const spec = parseSchedule(expr);
+async function runWorker() {
+    const store = new InMemoryJobStore();
+    const registry = new HandlerRegistry();
 
-    while (!signal.aborted) {
-        const next = nextFire(spec, Date.now());
-        if (next === null) return;
+    registry.register("heartbeat", (payload) => {
+        console.log(`  heartbeat ${payload.label} at ${new Date().toISOString()}`);
+    });
 
-        await new Promise(resolve => setTimeout(resolve, Math.max(0, next - Date.now())));
-        if (signal.aborted) return;
-        await work();
+    // Fails twice, then succeeds. The worker backs off between attempts.
+    let attempts = 0;
+    registry.register("flaky", (_, ctx) => {
+        attempts += 1;
+        console.log(`  flaky attempt ${ctx.attempt} of ${ctx.maxAttempts}`);
+        if (attempts < 3) throw new Error("upstream not ready");
+    });
+
+    // Cannot succeed no matter how many times it runs, so it skips its
+    // remaining attempts and goes straight to dead.
+    registry.register("malformed", () => {
+        throw new PermanentJobError("payload is missing a realm id");
+    });
+
+    const worker = new Worker({
+        store,
+        registry,
+        concurrency: 2,
+        pollIntervalMs: 100,
+        retry: { maxAttempts: 4, baseMs: 200, capMs: 5_000, multiplier: 2, jitter: "none" }
+    });
+
+    worker.addSchedule({
+        name: "heartbeat-every-second",
+        expr: "every 1s",
+        handler: "heartbeat",
+        payload: { label: "tide" }
+    });
+
+    await worker.enqueue("flaky");
+    await worker.enqueue("malformed");
+
+    worker.start();
+    await new Promise(resolve => setTimeout(resolve, 3_000));
+    await worker.stop();
+
+    console.log("\n--- final state ---");
+    for (const status of [JobStatus.Succeeded, JobStatus.Pending, JobStatus.Dead]) {
+        console.log(`  ${status.padEnd(10)} ${store.countByStatus(status)}`);
+    }
+    for (const run of store.byStatus(JobStatus.Dead)) {
+        console.log(`  dead: ${run.handler} after ${run.attempt} attempt(s), ${run.lastError}`);
     }
 }
 
-console.log("\n--- driving a function every second, three times ---");
-
-const controller = new AbortController();
-let ticks = 0;
-
-runOnSchedule("every 1s", async () => {
-    console.log(`  tick ${++ticks} at ${new Date().toISOString()}`);
-    if (ticks === 3) controller.abort();
-}, controller.signal).then(() => console.log("stopped"));
+console.log("\n--- running a worker for three seconds ---");
+runWorker().then(() => console.log("stopped"));

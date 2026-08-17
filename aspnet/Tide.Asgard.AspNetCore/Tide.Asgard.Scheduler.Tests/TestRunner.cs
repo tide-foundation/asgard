@@ -28,6 +28,21 @@ internal sealed class TestRunner
 		}
 	}
 
+	// Named separately from Test so that an async lambda cannot be mistaken for
+	// a fire and forget Action overload.
+	public void TestAsync(string name, Func<Task> body)
+	{
+		try
+		{
+			body().GetAwaiter().GetResult();
+			_passed++;
+		}
+		catch (Exception e)
+		{
+			_failures.Add($"{_suite} > {name}\n    {e.Message}");
+		}
+	}
+
 	public int Report(string title)
 	{
 		var total = _passed + _failures.Count;
@@ -66,6 +81,12 @@ internal static class Assert
 	public static void True(bool condition, string message)
 	{
 		if (!condition) throw new Exception(message);
+	}
+
+	public static void Contains(string needle, string? haystack)
+	{
+		if (haystack is not null && haystack.Contains(needle, StringComparison.Ordinal)) return;
+		throw new Exception($"expected text containing \"{needle}\", got {Render(haystack)}");
 	}
 
 	public static ScheduleParseException Throws(Action body)

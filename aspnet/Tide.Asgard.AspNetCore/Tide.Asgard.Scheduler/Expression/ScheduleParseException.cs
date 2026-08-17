@@ -22,6 +22,10 @@ public static class ScheduleErrorCode
 	public const string BadDuration = "E_BAD_DURATION";
 	public const string BadInstant = "E_BAD_INSTANT";
 	public const string Trailing = "E_TRAILING";
+
+	// Raised when reading a stored spec rather than an expression, so it carries
+	// no meaningful character offset.
+	public const string BadSpec = "E_BAD_SPEC";
 }
 
 public sealed class ScheduleParseException : Exception

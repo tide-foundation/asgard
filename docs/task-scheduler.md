@@ -3,11 +3,16 @@
 Work out when something should run next, in TypeScript and .NET, from one shared
 expression language. No third party dependencies in either runtime.
 
-Today this is the expression subsystem: parse a schedule, ask it for the next
-fire time. The durable store and worker loop are [not built yet](#not-built-yet),
-so you drive it yourself. That is a handful of lines and is shown below.
+It comes in two halves:
 
-## Usage
+- **Expression**: text in, next fire time out. Pure functions, no state.
+- **Execution**: a store holds jobs, a worker claims them and runs handlers, with
+  leases, retries and backoff.
+
+What is still missing is a durable store. Everything ships with an in memory one,
+so nothing survives a restart yet. See [not built yet](#not-built-yet).
+
+## Working out when something runs
 
 Two calls. Parse turns text into a spec, `nextFire` turns a spec plus "now" into
 the next instant. Parse once and keep the spec, it is immutable and reusable.
@@ -39,43 +44,6 @@ Console.WriteLine(next is null
 `nextFire` returns the first instant strictly after the one you pass, and null
 when the schedule can never fire again.
 
-### Rerunning a function
-
-```ts
-async function runOnSchedule(expr: string, work: () => Promise<void>, signal: AbortSignal) {
-    const spec = parseSchedule(expr);
-    while (!signal.aborted) {
-        const next = nextFire(spec, Date.now());
-        if (next === null) return;
-        await new Promise(r => setTimeout(r, Math.max(0, next - Date.now())));
-        if (signal.aborted) return;
-        await work();
-    }
-}
-
-runOnSchedule("every 5m", syncOrks, controller.signal);
-```
-
-```csharp
-static async Task RunOnSchedule(string expr, Func<Task> work, CancellationToken ct)
-{
-    var spec = ScheduleParser.Parse(expr);
-    while (!ct.IsCancellationRequested)
-    {
-        var next = ScheduleEvaluator.NextFire(spec, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        if (next is null) return;
-
-        var delay = next.Value - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (delay > 0) await Task.Delay(TimeSpan.FromMilliseconds(delay), ct);
-        await work();
-    }
-}
-```
-
-This is in-process only. Nothing survives a restart and two replicas will both
-fire. Use it for cache refreshes and local timers, not for anything that must
-happen exactly once across a fleet.
-
 ### Handling bad expressions
 
 Parse errors carry a stable code and a character offset, so you can point at the
@@ -98,6 +66,138 @@ catch (ScheduleParseException e)
 
 Both runtimes emit the same code for the same input. `on hour=25` is
 `E_VALUE_RANGE` at offset 8 in either language.
+
+## Running jobs
+
+Three pieces. A **store** holds runs, a **registry** maps a job name to a
+function, and a **worker** claims due runs and dispatches them.
+
+```ts
+const store = new InMemoryJobStore();
+const registry = new HandlerRegistry();
+
+registry.register("reconcile-orks", async (payload, ctx) => {
+    await reconcile(payload.realmId);
+});
+
+const worker = new Worker({ store, registry, concurrency: 4 });
+
+worker.addSchedule({
+    name: "nightly-reconcile",
+    expr: "on 03:00 tz=Australia/Sydney",
+    handler: "reconcile-orks",
+    payload: { realmId: "tide" }
+});
+
+await worker.enqueue("reconcile-orks", { realmId: "adhoc" });   // one off
+worker.start();
+```
+
+```csharp
+var store = new InMemoryJobStore();
+var registry = new HandlerRegistry();
+
+registry.Register("reconcile-orks", async (payload, ctx) => await Reconcile(payload));
+
+await using var worker = new Worker(new WorkerOptions
+{
+    Store = store, Registry = registry, Concurrency = 4
+});
+
+worker.AddSchedule(new ScheduleDefinition
+{
+    Name = "nightly-reconcile",
+    Expr = "on 03:00 tz=Australia/Sydney",
+    Handler = "reconcile-orks",
+    Payload = "tide"
+});
+
+await worker.EnqueueAsync("reconcile-orks", "adhoc");
+worker.Start();
+```
+
+Handlers are registered by **name**, not captured as closures, because a durable
+store holds a name and a payload rather than a function. That is also what lets a
+run enqueued by one process execute in another, including across runtimes.
+
+### What a tick does
+
+`start` loops over `tick`, and `tick` is public so tests can drive a worker with
+a fake clock instead of racing real timers.
+
+```
+reap        expired leases return to pending
+materialize schedules that have come due become runs
+claim       take up to concurrency due runs, under lease
+dispatch    run each handler
+settle      succeeded, retried with backoff, or dead
+```
+
+### Retries
+
+A failed attempt returns the run to pending with a later time, so `attempt`
+survives across attempts rather than starting over.
+
+```
+delay = min(baseMs * multiplier^(attempt-1), capMs), then jitter
+```
+
+Jitter is `none`, `full` (anywhere in `[0, delay]`) or `equal`
+(`[delay/2, delay]`). The default is full, because a fleet that failed together
+otherwise retries together. The cap is applied before jitter so it stays an
+upper bound.
+
+A handler that throws `PermanentJobError` (`PermanentJobException` in .NET) skips
+its remaining attempts and goes straight to dead. Use it for work that cannot
+succeed however many times it runs, like a malformed payload.
+
+A recurring schedule survives a run that dies. The successor is enqueued in the
+same call that settles the failure, so one bad night does not stop the job.
+
+### Missed occurrences
+
+If the process was down, `misfire` decides what happens.
+
+| Policy | Behaviour |
+|---|---|
+| `fire_once` | Catch up with a single run. The default: after an outage you usually want the job to happen, once, not sixty times. |
+| `fire_all` | Enqueue every missed occurrence. |
+| `skip` | Abandon what was missed and wait for the next one. |
+
+### Leases and the execution contract
+
+A claimed run is leased for `leaseMs`. If the worker dies, the reaper returns the
+run to pending once the lease expires, which is what makes a crash recoverable.
+It is also what makes double execution possible.
+
+> The contract is **at-least-once**. A worker can die after a side effect and
+> before its settle call, so handlers must be idempotent. No store fixes this. It
+> is a property of running work outside the transaction that records it.
+
+A handler that may outlive its lease has to call `ctx.heartbeat()` periodically,
+otherwise the reaper hands its run to someone else while it is still running.
+Heartbeat returns false when the lease is already gone, at which point the
+handler should stop.
+
+## Storing schedules
+
+Store the canonical spec, not the expression text. Specs are never re-parsed at
+fire time, so a later change to the language cannot reinterpret a schedule that
+is already running. Keep the original text alongside it for display.
+
+```ts
+const stored = specToString(parseSchedule("on 03:00 tz=Australia/Sydney"));
+const spec = specFromString(stored);
+```
+
+```csharp
+var stored = ScheduleSpecJson.ToJson(ScheduleParser.Parse("on 03:00 tz=Australia/Sydney"));
+var spec = ScheduleSpecJson.FromJson(stored);
+```
+
+The JSON carries a version, unrestricted fields collapse to `"any"`, and the
+timezone is validated on load rather than at fire time so a zone this host does
+not know fails where someone is watching.
 
 ## Recipes
 
@@ -240,10 +340,10 @@ dotnet run --project examples/dotnet/SchedulerExample
 ## Tests
 
 ```bash
-npm test                                              # TypeScript, 90 tests
+npm test                                              # TypeScript, 160 tests
 
 cd aspnet/Tide.Asgard.AspNetCore
-dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 90 tests
+dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 160 tests
 ```
 
 Both suites run
@@ -256,8 +356,14 @@ a frozen conformance file with two families:
   Codes rather than messages are the contract, because hand written parsers
   drift on invalid input first.
 
-On top of that each runtime has unit tests over the parsed spec, mirrored case
-for case so the two suites stay comparable.
+On top of that each runtime has unit tests over the parsed spec, over
+serialization, and over the store and worker, mirrored case for case so the two
+suites stay comparable. Serialization is checked by running every conformance
+fixture through storage and asserting the restored spec produces identical fire
+times, which covers every expression shape rather than a hand picked few.
+
+Worker tests run on a fake clock, so retries, leases and catch up are exercised
+without any waiting.
 
 DST fixtures cover both hemispheres, both policies for each case, and
 `Australia/Lord_Howe`, whose transition is 30 minutes rather than a whole hour.
@@ -270,15 +376,23 @@ production.
 ## Layout
 
 ```
-src/scheduler/expression/                       TypeScript
-  Tokenizer.ts  Parser.ts  Spec.ts  FieldSet.ts
-  Duration.ts   Evaluator.ts
-  TimeZone.ts                                   only platform specific file
+src/scheduler/                                  TypeScript
+  expression/
+    Tokenizer.ts  Parser.ts  Spec.ts  FieldSet.ts
+    Duration.ts   Evaluator.ts  Serialization.ts
+    TimeZone.ts                                 only platform specific file
+  execution/
+    Clock.ts  RetryPolicy.ts  JobRun.ts  JobStore.ts
+    InMemoryJobStore.ts  HandlerRegistry.ts  Worker.ts
 
-aspnet/.../Tide.Asgard.Scheduler/Expression/    .NET
-  Tokenizer.cs  ScheduleParser.cs  ScheduleSpec.cs  FieldSet.cs
-  DurationParser.cs  ScheduleEvaluator.cs
-  TimeZoneShim.cs                               only platform specific file
+aspnet/.../Tide.Asgard.Scheduler/               .NET
+  Expression/
+    Tokenizer.cs  ScheduleParser.cs  ScheduleSpec.cs  FieldSet.cs
+    DurationParser.cs  ScheduleEvaluator.cs  ScheduleSpecJson.cs
+    TimeZoneShim.cs                             only platform specific file
+  Execution/
+    Clock.cs  RetryPolicy.cs  JobRun.cs  IJobStore.cs
+    InMemoryJobStore.cs  HandlerRegistry.cs  Worker.cs
 ```
 
 Everything outside the two timezone files is integer arithmetic running the same
@@ -286,24 +400,27 @@ algorithm in both languages.
 
 ## Not built yet
 
-What exists is the expression subsystem only: text in, next fire time out. It has
-no state, no storage and no threads. Everything below is still to come.
+The only store is `InMemoryJobStore`, so today the scheduler is in process. Jobs
+are lost on restart and two replicas do not coordinate, beyond the idempotency
+key that stops them materializing the same occurrence twice through a shared
+store.
 
-1. **Spec serialization** to and from JSON. Schedules will store the canonical
-   spec plus the original expression text for display, and will never be
-   re-parsed at fire time, so a later change to the language cannot reinterpret
-   live schedules.
-2. **Job store and worker loop.** A `JobStore` interface, an in-memory
-   implementation, a handler registry that maps a job name to a function, and the
-   loop that claims due work and dispatches it.
-3. **Retry.** Exponential backoff with jitter, a cap on attempts, dead
-   lettering, and a permanent failure type that skips remaining attempts.
-4. **Postgres store.** Claim and lease with `FOR UPDATE SKIP LOCKED`, heartbeat
-   for long handlers, a reaper for expired leases, and the complete-and-chain
-   transaction that enqueues the next occurrence in the same commit that settles
-   the current one.
+1. **A durable store.** The obvious one is Postgres: claim and lease with
+   `FOR UPDATE SKIP LOCKED`, a reaper for expired leases, and the
+   complete-and-chain transaction. `JobStore` is deliberately small so a host can
+   implement it against the database it already has, which is why the scheduler
+   itself has no database dependency. Whether we ship a Postgres implementation
+   or leave it to the host is still open.
+2. **Durable schedules.** Schedules currently live in the worker's memory and are
+   re-registered at startup. A durable store would keep them in a table with
+   their spec, `next_fire_at` and enabled flag, which is also what lets an admin
+   surface pause and resume them.
+3. **Automatic heartbeat.** Long handlers must call `ctx.heartbeat()` themselves.
+   A background heartbeat for the duration of a dispatch would remove that
+   footgun.
+4. **Claim filtering by handler.** A worker currently dead letters a run whose
+   handler it does not know. In a mixed fleet it should decline to claim it
+   instead, and leave it for a worker that does.
 5. **Admin surface.** Trigger now, pause, cancel, requeue dead.
-
-Until item 2 lands there is no durability and no coordination between processes.
-When it does, the execution contract will be at-least-once: a worker can die
-after a side effect and before its commit, so handlers must be idempotent.
+6. **Observability.** The signal worth alerting on is the age of the oldest
+   pending run, not queue depth or error rate.

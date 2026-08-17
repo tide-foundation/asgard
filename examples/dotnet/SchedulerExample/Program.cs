@@ -6,6 +6,7 @@
 //   dotnet run --project examples/dotnet/SchedulerExample
 
 using System.Globalization;
+using Tide.Asgard.Scheduler.Execution;
 using Tide.Asgard.Scheduler.Expression;
 
 // 1. Preview when a schedule will fire.
@@ -45,23 +46,15 @@ foreach (var bad in new[] { "on hour=25", "on day=1 dow=mon", "every 5x", "on nt
 	}
 }
 
-// 3. Rerun a function on a schedule.
+// 3. Actually run jobs.
 //
-// In-process only. Nothing survives a restart and two replicas will both fire,
-// so use this for local timers rather than for work that must happen once.
+// A worker claims due work from a store and dispatches it to handlers looked up
+// by name. InMemoryJobStore keeps everything in the process, so nothing survives
+// a restart. Swap in a durable IJobStore and the same worker coordinates across
+// replicas.
 
-Console.WriteLine("\n--- driving a function every second, three times ---");
-
-using var cts = new CancellationTokenSource();
-var ticks = 0;
-
-await RunOnSchedule("every 1s", () =>
-{
-	Console.WriteLine($"  tick {++ticks} at {DateTimeOffset.UtcNow:O}");
-	if (ticks == 3) cts.Cancel();
-	return Task.CompletedTask;
-}, cts.Token);
-
+Console.WriteLine("\n--- running a worker for three seconds ---");
+await RunWorker();
 Console.WriteLine("stopped");
 return 0;
 
@@ -87,22 +80,62 @@ static void Preview(string expr, int count = 3)
 	Console.WriteLine($"{expr,-42} {string.Join("  ", fires)}");
 }
 
-static async Task RunOnSchedule(string expr, Func<Task> work, CancellationToken ct)
+static async Task RunWorker()
 {
-	var spec = ScheduleParser.Parse(expr);
+	var store = new InMemoryJobStore();
+	var registry = new HandlerRegistry();
 
-	while (!ct.IsCancellationRequested)
+	registry.Register("heartbeat", (payload, _) =>
+		Console.WriteLine($"  heartbeat {payload} at {DateTimeOffset.UtcNow:O}"));
+
+	// Fails twice, then succeeds. The worker backs off between attempts.
+	var attempts = 0;
+	registry.Register("flaky", (_, ctx) =>
 	{
-		var next = ScheduleEvaluator.NextFire(spec, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-		if (next is null) return;
+		attempts++;
+		Console.WriteLine($"  flaky attempt {ctx.Attempt} of {ctx.MaxAttempts}");
+		if (attempts < 3) throw new Exception("upstream not ready");
+	});
 
-		var delay = next.Value - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-		if (delay > 0)
+	// Cannot succeed no matter how many times it runs, so it skips its remaining
+	// attempts and goes straight to dead.
+	registry.Register("malformed", (_, _) =>
+		throw new PermanentJobException("payload is missing a realm id"));
+
+	await using var worker = new Worker(new WorkerOptions
+	{
+		Store = store,
+		Registry = registry,
+		Concurrency = 2,
+		PollIntervalMs = 100,
+		Retry = new RetryPolicy
 		{
-			try { await Task.Delay(TimeSpan.FromMilliseconds(delay), ct); }
-			catch (OperationCanceledException) { return; }
+			MaxAttempts = 4, BaseMs = 200, CapMs = 5_000, Multiplier = 2, Jitter = JitterMode.None
 		}
-		if (ct.IsCancellationRequested) return;
-		await work();
+	});
+
+	worker.AddSchedule(new ScheduleDefinition
+	{
+		Name = "heartbeat-every-second",
+		Expr = "every 1s",
+		Handler = "heartbeat",
+		Payload = "tide"
+	});
+
+	await worker.EnqueueAsync("flaky");
+	await worker.EnqueueAsync("malformed");
+
+	worker.Start();
+	await Task.Delay(TimeSpan.FromSeconds(3));
+	await worker.StopAsync();
+
+	Console.WriteLine("\n--- final state ---");
+	foreach (var status in new[] { JobStatus.Succeeded, JobStatus.Pending, JobStatus.Dead })
+	{
+		Console.WriteLine($"  {status,-10} {store.CountByStatus(status)}");
+	}
+	foreach (var run in store.ByStatus(JobStatus.Dead))
+	{
+		Console.WriteLine($"  dead: {run.Handler} after {run.Attempt} attempt(s), {run.LastError}");
 	}
 }
