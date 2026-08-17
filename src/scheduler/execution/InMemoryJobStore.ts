@@ -30,7 +30,7 @@ export class InMemoryJobStore implements JobStore {
             id: this.nextId(),
             scheduleId: request.scheduleId ?? null,
             handler: request.handler,
-            payload: request.payload,
+            payload: normalizePayload(request.payload),
             idempotencyKey: key,
             runAtMs: request.runAtMs,
             status: JobStatus.Pending,
@@ -215,4 +215,13 @@ export class InMemoryJobStore implements JobStore {
 // Sequential ids compared numerically so run-10 sorts after run-9.
 function compareIds(a: string, b: string): number {
     return Number(a.slice(4)) - Number(b.slice(4));
+}
+
+// Payloads go through JSON here even though nothing forces it, so that a handler
+// sees exactly what it would see through a durable store. Without this a job
+// would work in tests and then meet a Date turned into a string, or a class
+// instance turned into a plain object, the first time it ran against Postgres.
+function normalizePayload(payload: unknown): unknown {
+    if (payload === undefined || payload === null) return null;
+    return JSON.parse(JSON.stringify(payload));
 }

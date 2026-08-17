@@ -10,6 +10,13 @@ namespace Tide.Asgard.Scheduler.Execution;
 public sealed record JobStoreStats(
 	int Pending, int Leased, int Succeeded, int Dead, long OldestPendingAgeMs);
 
+// Implemented by stores that own their tables. Kept separate from IJobStore so
+// the contract does not carry something only durable implementations need.
+public interface ISchemaAwareJobStore
+{
+	Task EnsureSchemaAsync(CancellationToken ct = default);
+}
+
 // The seam between the scheduler and whatever database the host already uses.
 // Implementing this is the only work needed to make the scheduler durable, and
 // it is why the scheduler itself has no database dependency.

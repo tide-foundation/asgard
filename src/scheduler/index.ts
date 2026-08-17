@@ -26,7 +26,10 @@ export { JobRun, JobRunRequest, JobStatus } from "./execution/JobRun";
 export { JobStore, JobStoreStats } from "./execution/JobStore";
 export { InMemoryJobStore } from "./execution/InMemoryJobStore";
 export { PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL } from "./execution/PostgresJobStore";
-export { HandlerRegistry, JobContext, JobHandler } from "./execution/HandlerRegistry";
+export { HandlerRegistry, JobContext } from "./execution/HandlerRegistry";
+export { JobDefinition, defineJob, PayloadError } from "./execution/JobDefinition";
+export { createScheduler } from "./execution/Scheduler";
 export {
-    Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy, RetentionPolicy
+    Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy, RetentionPolicy,
+    EnqueueOptions
 } from "./execution/Worker";

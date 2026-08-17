@@ -16,7 +16,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
-    PostgresJobStore, SCHEDULER_SCHEMA_SQL, HandlerRegistry, Worker, FakeClock, JobStatus, JitterMode
+    PostgresJobStore, SCHEDULER_SCHEMA_SQL, Worker, FakeClock, JobStatus, JitterMode, defineJob
 } = require(path.join(__dirname, "..", "..", "dist", "cjs", "scheduler", "index.js"));
 
 const DATABASE_URL = process.env.SCHEDULER_TEST_DATABASE_URL;
@@ -338,10 +338,10 @@ describe("worker on postgres", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DA
         await pool.query("truncate table asgard_job_runs restart identity");
     });
 
-    function newWorker(clock, registry, owner) {
+    function newWorker(clock, jobs, owner) {
         return new Worker({
             store,
-            registry,
+            jobs,
             clock,
             owner,
             leaseMs: 30_000,
@@ -352,12 +352,11 @@ describe("worker on postgres", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DA
 
     test("runs a job end to end", async () => {
         const clock = new FakeClock(T0);
-        const registry = new HandlerRegistry();
         const seen = [];
-        registry.register("greet", payload => seen.push(payload));
+        const greet = defineJob({ name: "greet", handler: payload => seen.push(payload) });
 
-        const worker = newWorker(clock, registry, "solo");
-        await worker.enqueue("greet", { name: "asgard" });
+        const worker = newWorker(clock, [greet], "solo");
+        await worker.enqueue(greet, { name: "asgard" });
 
         const result = await worker.tick();
         assert.equal(result.succeeded, 1);
@@ -366,15 +365,17 @@ describe("worker on postgres", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DA
 
     test("retries with backoff then succeeds", async () => {
         const clock = new FakeClock(T0);
-        const registry = new HandlerRegistry();
         let attempts = 0;
-        registry.register("flaky", () => {
-            attempts += 1;
-            if (attempts < 3) throw new Error("not yet");
+        const flaky = defineJob({
+            name: "flaky",
+            handler: () => {
+                attempts += 1;
+                if (attempts < 3) throw new Error("not yet");
+            }
         });
 
-        const worker = newWorker(clock, registry, "solo");
-        const run = await worker.enqueue("flaky");
+        const worker = newWorker(clock, [flaky], "solo");
+        const run = await worker.enqueue(flaky);
 
         assert.equal((await worker.tick()).retried, 1);
         assert.equal((await store.get(run.id)).runAtMs, T0 + 1_000);
@@ -389,14 +390,13 @@ describe("worker on postgres", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DA
 
     test("two workers sharing a database run each occurrence once", async () => {
         const clock = new FakeClock(T0);
-        const registry = new HandlerRegistry();
         let runs = 0;
-        registry.register("sweep", () => { runs += 1; });
+        const sweep = defineJob({ name: "sweep", handler: () => { runs += 1; } });
 
-        const a = newWorker(clock, registry, "a");
-        const b = newWorker(clock, registry, "b");
+        const a = newWorker(clock, [sweep], "a");
+        const b = newWorker(clock, [sweep], "b");
 
-        const definition = { name: "shared-sweep", expr: "on second=*/30", handler: "sweep" };
+        const definition = { name: "shared-sweep", expr: "on second=*/30", job: sweep };
         a.addSchedule(definition);
         b.addSchedule(definition);
 

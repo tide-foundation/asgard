@@ -200,24 +200,29 @@ Asgard ships a schedule expression language with matching TypeScript and .NET
 implementations, so both runtimes agree on when a job should next run. Neither
 takes a third party dependency.
 
-```ts
-const spec = parseSchedule("on 09:30 dow=mon-fri tz=Australia/Sydney");
-const next = nextFire(spec, Date.now());
-```
+A job definition ties a name, a payload type and a handler together, so
+enqueueing a job cannot disagree with the handler that receives it:
 
 ```csharp
-var spec = ScheduleParser.Parse("on 09:30 dow=mon-fri tz=Australia/Sydney");
-long? next = ScheduleEvaluator.NextFire(spec, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+var reconcile = Job.Define<ReconcilePayload>(
+    "reconcile-orks", async (payload, ctx) => await Reconcile(payload.RealmId));
+
+await using var worker = await Worker.CreateAsync(new WorkerOptions
+{
+    Store = PostgresJobStore.Create(connectionString),
+    Jobs = [reconcile],
+    Schedules =
+    [
+        ScheduleDefinition.For(
+            "nightly", "on 03:00 tz=Australia/Sydney", reconcile, new ReconcilePayload("tide"))
+    ]
+});
+
+worker.Start();
 ```
 
-Jobs run through a worker backed by a job store. Point it at Postgres and the
-same schedules survive restarts and coordinate across replicas, with the SDK
-providing the schema and every query:
-
-```csharp
-await using var store = PostgresJobStore.Create(connectionString);
-await store.EnsureSchemaAsync();
-```
+You supply a connection string, the SDK supplies the schema, the claim and lease
+queries, retries with backoff, and the reaper.
 
 See [docs/task-scheduler.md](docs/task-scheduler.md) for the language reference,
 recipes, and what is still to be built. Runnable examples live in

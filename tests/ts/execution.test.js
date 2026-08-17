@@ -9,7 +9,8 @@ const path = require("node:path");
 
 const {
     FakeClock, InMemoryJobStore, HandlerRegistry, Worker, MisfirePolicy,
-    JobStatus, JitterMode, retryDelayMs, shouldRetry, PermanentJobError
+    JobStatus, JitterMode, retryDelayMs, shouldRetry, PermanentJobError,
+    defineJob, createScheduler
 } = require(path.join(__dirname, "..", "..", "dist", "cjs", "scheduler", "index.js"));
 
 const T0 = Date.parse("2026-08-17T00:00:00Z");
@@ -18,6 +19,10 @@ const T0 = Date.parse("2026-08-17T00:00:00Z");
 const NO_JITTER = {
     maxAttempts: 3, baseMs: 1_000, capMs: 60_000, multiplier: 2, jitter: JitterMode.None
 };
+
+// Jobs register themselves when enqueued or scheduled, so tests only name a
+// job once, in its definition.
+const job = (name, handler, extra = {}) => defineJob({ name, handler, ...extra });
 
 function harness(options = {}) {
     const clock = new FakeClock(T0);
@@ -140,13 +145,13 @@ describe("in memory store", () => {
 
 describe("worker: one off jobs", () => {
     test("runs a job and passes the payload through", async () => {
-        const { store, registry, worker } = harness();
+        const { store, worker } = harness();
         const seen = [];
-        registry.register("greet", async (payload, ctx) => {
+        const greet = job("greet", async (payload, ctx) => {
             seen.push({ payload, attempt: ctx.attempt });
         });
 
-        await worker.enqueue("greet", { name: "asgard" });
+        await worker.enqueue(greet, { name: "asgard" });
         const result = await worker.tick();
 
         assert.equal(result.claimed, 1);
@@ -156,11 +161,11 @@ describe("worker: one off jobs", () => {
     });
 
     test("a job scheduled for later is not run yet", async () => {
-        const { clock, worker, registry } = harness();
+        const { clock, worker } = harness();
         let runs = 0;
-        registry.register("later", () => { runs += 1; });
+        const later = job("later", () => { runs += 1; });
 
-        await worker.enqueue("later", null, { runAtMs: T0 + 10_000 });
+        await worker.enqueue(later, undefined, { runAtMs: T0 + 10_000 });
         assert.equal((await worker.tick()).claimed, 0);
 
         clock.advance(10_000);
@@ -170,7 +175,7 @@ describe("worker: one off jobs", () => {
 
     test("a run for an unregistered handler is left alone, not claimed", async () => {
         const { store, worker } = harness();
-        await worker.enqueue("missing");
+        await worker.enqueueByName("missing");
 
         const result = await worker.tick();
         assert.equal(result.claimed, 0, "another worker may be able to run it");
@@ -178,11 +183,11 @@ describe("worker: one off jobs", () => {
     });
 
     test("only registered handlers are claimed when others are due", async () => {
-        const { store, registry, worker } = harness();
-        registry.register("known", () => { });
+        const { store, worker } = harness();
+        const known = job("known", () => { });
 
-        await worker.enqueue("missing");
-        await worker.enqueue("known");
+        await worker.enqueueByName("missing");
+        await worker.enqueue(known);
 
         const result = await worker.tick();
         assert.equal(result.claimed, 1);
@@ -192,7 +197,7 @@ describe("worker: one off jobs", () => {
 
     test("with filtering off an unknown handler goes to dead", async () => {
         const { store, worker } = harness({ claimOnlyRegisteredHandlers: false });
-        await worker.enqueue("missing");
+        await worker.enqueueByName("missing");
 
         assert.equal((await worker.tick()).dead, 1);
 
@@ -201,16 +206,156 @@ describe("worker: one off jobs", () => {
     });
 });
 
+describe("job definitions", () => {
+    test("enqueueing a definition registers it", async () => {
+        const { registry, worker } = harness();
+        const greet = job("greet", () => { });
+
+        assert.equal(registry.has("greet"), false);
+        await worker.enqueue(greet);
+        assert.equal(registry.has("greet"), true, "no separate registration step");
+    });
+
+    test("scheduling a definition registers it", async () => {
+        const { registry, worker } = harness();
+        worker.addSchedule({ name: "s", expr: "on 03:00", job: job("sweep", () => { }) });
+
+        assert.equal(registry.has("sweep"), true);
+    });
+
+    test("a job can carry its own attempt limit", async () => {
+        const { store, worker } = harness();
+        await worker.enqueue(job("careful", () => { }, { maxAttempts: 9 }));
+
+        assert.equal(store.all()[0].maxAttempts, 9);
+    });
+
+    test("an enqueue option beats the job's own limit", async () => {
+        const { store, worker } = harness();
+        await worker.enqueue(job("careful", () => { }, { maxAttempts: 9 }), undefined, { maxAttempts: 2 });
+
+        assert.equal(store.all()[0].maxAttempts, 2);
+    });
+
+    test("registering the same name twice is refused", () => {
+        const { registry } = harness();
+        registry.register(job("dup", () => { }));
+
+        assert.throws(() => registry.register(job("dup", () => { })), /already registered/);
+    });
+
+    test("jobs and schedules can be given to the constructor", async () => {
+        const clock = new FakeClock(T0);
+        const store = new InMemoryJobStore();
+        const fired = [];
+        const sweep = job("sweep", () => { fired.push(clock.nowMs()); });
+
+        const worker = new Worker({
+            store, clock, retry: NO_JITTER,
+            jobs: [sweep],
+            schedules: [{ name: "half-minute", expr: "on second=*/30", job: sweep }]
+        });
+
+        clock.advance(30_000);
+        assert.equal((await worker.tick()).succeeded, 1);
+        assert.deepEqual(fired, [T0 + 30_000]);
+    });
+
+    test("createScheduler applies the schema when the store has one", async () => {
+        let applied = 0;
+        const store = new InMemoryJobStore();
+        store.ensureSchema = async () => { applied += 1; };
+
+        const worker = await createScheduler({ store, jobs: [job("noop", () => { })] });
+
+        assert.equal(applied, 1);
+        assert.ok(worker instanceof Worker);
+    });
+
+    test("createScheduler is fine with a store that has no schema", async () => {
+        const worker = await createScheduler({ store: new InMemoryJobStore() });
+        assert.ok(worker instanceof Worker);
+    });
+});
+
+describe("payload handling", () => {
+    test("parse runs on dequeue and its result reaches the handler", async () => {
+        const { worker } = harness();
+        const seen = [];
+
+        await worker.enqueue(defineJob({
+            name: "typed",
+            parse: raw => ({ realmId: String(raw.realmId).toUpperCase() }),
+            handler: payload => { seen.push(payload); }
+        }), { realmId: "tide" });
+
+        await worker.tick();
+        assert.deepEqual(seen, [{ realmId: "TIDE" }]);
+    });
+
+    test("a payload that fails parse is dead lettered without burning attempts", async () => {
+        const { store, worker } = harness();
+
+        await worker.enqueue(defineJob({
+            name: "strict",
+            parse: raw => {
+                if (typeof raw?.realmId !== "string") throw new Error("realmId must be a string");
+                return raw;
+            },
+            handler: () => { }
+        }), { realmId: 42 }, { maxAttempts: 5 });
+
+        assert.equal((await worker.tick()).dead, 1, "retrying cannot change a stored payload");
+
+        const [run] = store.byStatus(JobStatus.Dead);
+        assert.equal(run.attempt, 1);
+        assert.match(run.lastError, /realmId must be a string/);
+    });
+
+    // The in memory store deliberately round trips payloads through JSON so a
+    // job cannot pass in tests and then meet a different shape in production.
+    test("payloads are normalised the way a durable store would", async () => {
+        const { worker } = harness();
+        const seen = [];
+
+        class Realm {
+            constructor(id) { this.id = id; }
+        }
+
+        await worker.enqueue(job("shapes", payload => { seen.push(payload); }), {
+            when: new Date("2026-08-17T00:00:00Z"),
+            realm: new Realm("tide"),
+            missing: undefined
+        });
+
+        await worker.tick();
+        assert.deepEqual(seen, [{
+            when: "2026-08-17T00:00:00.000Z",
+            realm: { id: "tide" }
+        }]);
+    });
+
+    test("a job with no payload receives null", async () => {
+        const { worker } = harness();
+        const seen = [];
+
+        await worker.enqueue(job("bare", payload => { seen.push(payload); }));
+        await worker.tick();
+
+        assert.deepEqual(seen, [null]);
+    });
+});
+
 describe("worker: failure handling", () => {
     test("retries with backoff then succeeds", async () => {
-        const { clock, store, registry, worker } = harness();
+        const { clock, store, worker } = harness();
         let attempts = 0;
-        registry.register("flaky", () => {
+        const flaky = job("flaky", () => {
             attempts += 1;
             if (attempts < 3) throw new Error(`boom ${attempts}`);
         });
 
-        await worker.enqueue("flaky");
+        await worker.enqueue(flaky);
 
         assert.equal((await worker.tick()).retried, 1);
         assert.equal(store.all()[0].runAtMs, T0 + 1_000, "first retry waits one base delay");
@@ -226,10 +371,10 @@ describe("worker: failure handling", () => {
     });
 
     test("dead letters once attempts run out", async () => {
-        const { clock, store, registry, worker } = harness();
-        registry.register("doomed", () => { throw new Error("always fails"); });
+        const { clock, store, worker } = harness();
+        const doomed = job("doomed", () => { throw new Error("always fails"); });
 
-        await worker.enqueue("doomed", null, { maxAttempts: 2 });
+        await worker.enqueue(doomed, undefined, { maxAttempts: 2 });
 
         assert.equal((await worker.tick()).retried, 1);
         clock.advance(1_000);
@@ -241,12 +386,12 @@ describe("worker: failure handling", () => {
     });
 
     test("a permanent error skips the remaining attempts", async () => {
-        const { store, registry, worker } = harness();
-        registry.register("bad-payload", () => {
+        const { store, worker } = harness();
+        const badPayload = job("bad-payload", () => {
             throw new PermanentJobError("payload is malformed");
         });
 
-        await worker.enqueue("bad-payload", null, { maxAttempts: 5 });
+        await worker.enqueue(badPayload, undefined, { maxAttempts: 5 });
         assert.equal((await worker.tick()).dead, 1);
 
         const [run] = store.byStatus(JobStatus.Dead);
@@ -255,10 +400,10 @@ describe("worker: failure handling", () => {
 
     test("failures are reported to onError", async () => {
         const seen = [];
-        const { registry, worker } = harness({ onError: (err, run) => seen.push([err.message, run?.id]) });
-        registry.register("noisy", () => { throw new Error("kaboom"); });
+        const { worker } = harness({ onError: (err, run) => seen.push([err.message, run?.id]) });
+        const noisy = job("noisy", () => { throw new Error("kaboom"); });
 
-        await worker.enqueue("noisy");
+        await worker.enqueue(noisy);
         await worker.tick();
 
         assert.deepEqual(seen, [["kaboom", "run-1"]]);
@@ -267,11 +412,11 @@ describe("worker: failure handling", () => {
 
 describe("worker: recurring schedules", () => {
     test("a calendar schedule materializes each occurrence once", async () => {
-        const { clock, registry, worker } = harness();
+        const { clock, worker } = harness();
         const fired = [];
-        registry.register("sweep", () => { fired.push(clock.nowMs()); });
+        const sweep = job("sweep", () => { fired.push(clock.nowMs()); });
 
-        worker.addSchedule({ name: "sweep-every-30s", expr: "on second=*/30", handler: "sweep" });
+        worker.addSchedule({ name: "sweep-every-30s", expr: "on second=*/30", job: sweep });
 
         assert.equal((await worker.tick()).materialized, 0, "nothing is due yet");
 
@@ -289,11 +434,11 @@ describe("worker: recurring schedules", () => {
     });
 
     test("a fixed delay schedule chains when the run settles", async () => {
-        const { clock, store, registry, worker } = harness();
+        const { clock, store, worker } = harness();
         let runs = 0;
-        registry.register("sync", () => { runs += 1; });
+        const sync = job("sync", () => { runs += 1; });
 
-        worker.addSchedule({ name: "sync-loop", expr: "every 10s", handler: "sync" });
+        worker.addSchedule({ name: "sync-loop", expr: "every 10s", job: sync });
 
         clock.advance(10_000);
         assert.equal((await worker.tick()).succeeded, 1);
@@ -305,11 +450,11 @@ describe("worker: recurring schedules", () => {
     });
 
     test("a schedule survives a run that dead letters", async () => {
-        const { clock, store, registry, worker } = harness();
-        registry.register("brittle", () => { throw new PermanentJobError("nope"); });
+        const { clock, store, worker } = harness();
+        const brittle = job("brittle", () => { throw new PermanentJobError("nope"); });
 
         worker.addSchedule({
-            name: "brittle-loop", expr: "every 10s", handler: "brittle", maxAttempts: 1
+            name: "brittle-loop", expr: "every 10s", job: brittle, maxAttempts: 1
         });
 
         clock.advance(10_000);
@@ -319,9 +464,9 @@ describe("worker: recurring schedules", () => {
 
     test("missed occurrences follow the misfire policy", async () => {
         async function missed(misfire) {
-            const { clock, registry, worker } = harness();
-            registry.register("catch-up", () => { });
-            worker.addSchedule({ name: "every-10s", expr: "on second=*/10", handler: "catch-up", misfire });
+            const { clock, worker } = harness();
+            const catchUp = job("catch-up", () => { });
+            worker.addSchedule({ name: "every-10s", expr: "on second=*/10", job: catchUp, misfire });
 
             clock.advance(35_000);
             return (await worker.tick()).materialized;
@@ -335,14 +480,13 @@ describe("worker: recurring schedules", () => {
     test("two workers sharing a store materialize an occurrence only once", async () => {
         const clock = new FakeClock(T0);
         const store = new InMemoryJobStore();
-        const registry = new HandlerRegistry();
-        registry.register("shared", () => { });
+        const shared = job("shared", () => { });
 
-        const options = { store, registry, clock, retry: NO_JITTER, random: () => 0.5 };
+        const options = { store, jobs: [shared], clock, retry: NO_JITTER, random: () => 0.5 };
         const a = new Worker({ ...options, owner: "a" });
         const b = new Worker({ ...options, owner: "b" });
 
-        const definition = { name: "shared-sweep", expr: "on second=*/30", handler: "shared" };
+        const definition = { name: "shared-sweep", expr: "on second=*/30", job: shared };
         a.addSchedule(definition);
         b.addSchedule(definition);
 
@@ -396,12 +540,12 @@ describe("retention", () => {
     });
 
     test("the worker sweeps on its own interval", async () => {
-        const { clock, store, registry, worker } = harness({
+        const { clock, store, worker } = harness({
             retention: { afterMs: 60_000, everyMs: 30_000 }
         });
-        registry.register("done", () => { });
+        const done = job("done", () => { });
 
-        await worker.enqueue("done");
+        await worker.enqueue(done);
         await worker.tick();
         assert.equal(store.countByStatus(JobStatus.Succeeded), 1);
 
@@ -449,15 +593,12 @@ describe("automatic lease renewal", () => {
     function slowHandlerSetup() {
         const store = new InMemoryJobStore();
 
-        const busy = new HandlerRegistry();
         const state = { finished: false, stolen: 0 };
-        busy.register("slow", async () => {
+        const busy = job("slow", async () => {
             await wait(600);
             state.finished = true;
         });
-
-        const thief = new HandlerRegistry();
-        thief.register("slow", () => { state.stolen += 1; });
+        const thief = job("slow", () => { state.stolen += 1; });
 
         return { store, busy, thief, state };
     }
@@ -466,12 +607,12 @@ describe("automatic lease renewal", () => {
         const { store, busy, thief, state } = slowHandlerSetup();
 
         const owner = new Worker({
-            store, registry: busy, owner: "owner",
+            store, jobs: [busy], owner: "owner",
             leaseMs: 200, heartbeatMs: 50, pollIntervalMs: 20
         });
-        const other = new Worker({ store, registry: thief, owner: "other", leaseMs: 200 });
+        const other = new Worker({ store, jobs: [thief], owner: "other", leaseMs: 200 });
 
-        await owner.enqueue("slow");
+        await owner.enqueue(busy);
         owner.start();
 
         // Well past the lease, so without renewal this would already be stealable.
@@ -488,10 +629,10 @@ describe("automatic lease renewal", () => {
     test("a bare tick does not renew, and the lease lapses", async () => {
         const { store, busy, thief, state } = slowHandlerSetup();
 
-        const owner = new Worker({ store, registry: busy, owner: "owner", leaseMs: 200 });
-        const other = new Worker({ store, registry: thief, owner: "other", leaseMs: 200 });
+        const owner = new Worker({ store, jobs: [busy], owner: "owner", leaseMs: 200 });
+        const other = new Worker({ store, jobs: [thief], owner: "other", leaseMs: 200 });
 
-        await owner.enqueue("slow");
+        await owner.enqueue(busy);
 
         // Deliberately not awaited: tick is blocked on the handler, which is
         // exactly why renewal cannot live inside it.
@@ -509,12 +650,12 @@ describe("automatic lease renewal", () => {
 
 describe("worker: lifecycle", () => {
     test("start and stop drive the loop without leaking it", async () => {
-        const { registry, worker } = harness({ pollIntervalMs: 1_000 });
+        const { worker } = harness({ pollIntervalMs: 1_000 });
         let ran;
         const reached = new Promise(resolve => { ran = resolve; });
-        registry.register("tick", () => { ran(); });
+        const ticker = job("tick", () => { ran(); });
 
-        await worker.enqueue("tick");
+        await worker.enqueue(ticker);
         worker.start();
 
         // Wait for the loop to actually reach the handler rather than assuming it

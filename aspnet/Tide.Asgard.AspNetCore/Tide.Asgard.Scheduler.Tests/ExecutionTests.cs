@@ -53,12 +53,229 @@ internal static class ExecutionTests
 		RetryBackoff(runner);
 		Store(runner);
 		OneOffJobs(runner);
+		Definitions(runner);
+		PayloadHandling(runner);
 		FailureHandling(runner);
 		RecurringSchedules(runner);
 		Retention(runner);
 		Stats(runner);
 		LeaseRenewal(runner);
 		Lifecycle(runner);
+	}
+
+	private static void Definitions(TestRunner runner)
+	{
+		runner.Suite("job definitions");
+
+		runner.TestAsync("enqueueing a definition registers it", async () =>
+		{
+			var h = NewHarness();
+			var greet = Job.Define("greet", _ => { });
+
+			Assert.Equal(false, h.Registry.Has("greet"));
+			await h.Worker.EnqueueAsync(greet);
+			Assert.Equal(true, h.Registry.Has("greet"), "no separate registration step");
+		});
+
+		runner.Test("scheduling a definition registers it", () =>
+		{
+			var h = NewHarness();
+			h.Worker.AddSchedule(ScheduleDefinition.For("s", "on 03:00", Job.Define("sweep", _ => { })));
+
+			Assert.Equal(true, h.Registry.Has("sweep"));
+		});
+
+		runner.TestAsync("a job can carry its own attempt limit", async () =>
+		{
+			var h = NewHarness();
+			await h.Worker.EnqueueAsync(Job.Define("careful", _ => { }, maxAttempts: 9));
+
+			Assert.Equal(9, h.Store.All()[0].MaxAttempts);
+		});
+
+		runner.TestAsync("an enqueue option beats the job's own limit", async () =>
+		{
+			var h = NewHarness();
+			await h.Worker.EnqueueAsync(Job.Define("careful", _ => { }, maxAttempts: 9), maxAttempts: 2);
+
+			Assert.Equal(2, h.Store.All()[0].MaxAttempts);
+		});
+
+		runner.Test("registering the same name twice is refused", () =>
+		{
+			var h = NewHarness();
+			h.Registry.Register(Job.Define("dup", _ => { }));
+
+			try
+			{
+				h.Registry.Register(Job.Define("dup", _ => { }));
+				throw new Exception("expected the second registration to be refused");
+			}
+			catch (InvalidOperationException e)
+			{
+				Assert.Contains("already registered", e.Message);
+			}
+		});
+
+		runner.TestAsync("jobs and schedules can be given to the constructor", async () =>
+		{
+			var clock = new FakeClock(T0);
+			var store = new InMemoryJobStore();
+			var fired = new List<long>();
+			var sweep = Job.Define("sweep", _ => fired.Add(clock.NowMs));
+
+			var worker = new Worker(new WorkerOptions
+			{
+				Store = store,
+				Clock = clock,
+				Retry = NoJitter,
+				Jobs = [sweep],
+				Schedules = [ScheduleDefinition.For("half-minute", "on second=*/30", sweep)]
+			});
+
+			clock.Advance(30_000);
+			Assert.Equal(1, (await worker.TickAsync()).Succeeded);
+			Assert.Sequence([T0 + 30_000], fired);
+		});
+
+		runner.TestAsync("Worker.CreateAsync applies the schema when the store has one", async () =>
+		{
+			var store = new SchemaCountingStore();
+			var worker = await Worker.CreateAsync(new WorkerOptions
+			{
+				Store = store, Jobs = [Job.Define("noop", _ => { })]
+			});
+
+			Assert.Equal(1, store.SchemaApplied);
+			Assert.True(worker is not null, "expected a worker");
+		});
+
+		runner.TestAsync("Worker.CreateAsync is fine with a store that has no schema", async () =>
+		{
+			var worker = await Worker.CreateAsync(new WorkerOptions { Store = new InMemoryJobStore() });
+			Assert.True(worker is not null, "expected a worker");
+		});
+	}
+
+	private sealed record Realm(string Id, int Retries);
+
+	private static void PayloadHandling(TestRunner runner)
+	{
+		runner.Suite("payload handling");
+
+		runner.TestAsync("a typed payload is deserialized for the handler", async () =>
+		{
+			var h = NewHarness();
+			var seen = new List<Realm>();
+
+			await h.Worker.EnqueueAsync(
+				Job.Define<Realm>("typed", (payload, _) => seen.Add(payload)),
+				new Realm("tide", 2));
+
+			await h.Worker.TickAsync();
+			Assert.Equal(1, seen.Count);
+			Assert.Equal("tide", seen[0].Id);
+			Assert.Equal(2, seen[0].Retries);
+		});
+
+		runner.TestAsync("parse runs on dequeue and its result reaches the handler", async () =>
+		{
+			var h = NewHarness();
+			var seen = new List<string>();
+
+			await h.Worker.EnqueueAsync(
+				Job.Define<string>(
+					"shouty",
+					(payload, _) => seen.Add(payload),
+					parse: raw => raw?.ToString()?.Trim('"').ToUpperInvariant() ?? ""),
+				"tide");
+
+			await h.Worker.TickAsync();
+			Assert.Sequence(["TIDE"], seen);
+		});
+
+		runner.TestAsync("a payload that fails parse is dead lettered without burning attempts", async () =>
+		{
+			var h = NewHarness();
+
+			await h.Worker.EnqueueAsync(
+				Job.Define<Realm>(
+					"strict",
+					(_, _) => { },
+					parse: _ => throw new InvalidOperationException("realmId must be a string")),
+				new Realm("tide", 1),
+				maxAttempts: 5);
+
+			// The parse failure surfaces as a permanent failure, since retrying
+			// cannot change a stored payload.
+			Assert.Equal(1, (await h.Worker.TickAsync()).Dead);
+			Assert.Equal(1, h.Store.ByStatus(JobStatus.Dead)[0].Attempt);
+		});
+
+		runner.TestAsync("a job with no payload receives null", async () =>
+		{
+			var h = NewHarness();
+			var seen = 0;
+
+			await h.Worker.EnqueueAsync(Job.Define<object?>("bare", (payload, _) =>
+			{
+				if (payload is null) seen++;
+			}));
+
+			await h.Worker.TickAsync();
+			Assert.Equal(1, seen);
+		});
+	}
+
+	// Wraps the in memory store only to prove the schema hook fires. Composition
+	// rather than inheritance because InMemoryJobStore is sealed, which is also
+	// what a host implementing ISchemaAwareJobStore around an existing store
+	// would have to do.
+	private sealed class SchemaCountingStore : IJobStore, ISchemaAwareJobStore
+	{
+		private readonly InMemoryJobStore _inner = new();
+
+		public int SchemaApplied { get; private set; }
+
+		public Task EnsureSchemaAsync(CancellationToken ct = default)
+		{
+			SchemaApplied++;
+			return Task.CompletedTask;
+		}
+
+		public Task<JobRun?> EnqueueAsync(JobRunRequest request, CancellationToken ct = default)
+			=> _inner.EnqueueAsync(request, ct);
+
+		public Task<IReadOnlyList<JobRun>> ClaimDueAsync(
+			string owner, long nowMs, long leaseMs, int max,
+			IReadOnlyCollection<string>? handlers = null, CancellationToken ct = default)
+			=> _inner.ClaimDueAsync(owner, nowMs, leaseMs, max, handlers, ct);
+
+		public Task<bool> HeartbeatAsync(string runId, long leaseUntilMs, CancellationToken ct = default)
+			=> _inner.HeartbeatAsync(runId, leaseUntilMs, ct);
+
+		public Task CompleteAsync(string runId, JobRunRequest? next, long nowMs, CancellationToken ct = default)
+			=> _inner.CompleteAsync(runId, next, nowMs, ct);
+
+		public Task RetryAsync(string runId, string error, long runAtMs, long nowMs, CancellationToken ct = default)
+			=> _inner.RetryAsync(runId, error, runAtMs, nowMs, ct);
+
+		public Task DeadLetterAsync(
+			string runId, string error, JobRunRequest? next, long nowMs, CancellationToken ct = default)
+			=> _inner.DeadLetterAsync(runId, error, next, nowMs, ct);
+
+		public Task<int> ReapExpiredAsync(long nowMs, CancellationToken ct = default)
+			=> _inner.ReapExpiredAsync(nowMs, ct);
+
+		public Task<int> PurgeSettledAsync(
+			long beforeMs, int limit, bool includeDead = false, CancellationToken ct = default)
+			=> _inner.PurgeSettledAsync(beforeMs, limit, includeDead, ct);
+
+		public Task<JobStoreStats> StatsAsync(long nowMs, CancellationToken ct = default)
+			=> _inner.StatsAsync(nowMs, ct);
+
+		public Task<JobRun?> GetAsync(string runId, CancellationToken ct = default)
+			=> _inner.GetAsync(runId, ct);
 	}
 
 	private static void Retention(TestRunner runner)
@@ -110,9 +327,9 @@ internal static class ExecutionTests
 		runner.TestAsync("the worker sweeps on its own interval", async () =>
 		{
 			var h = NewHarness(retention: new RetentionPolicy { AfterMs = 60_000, EveryMs = 30_000 });
-			h.Registry.Register("done", (_, _) => { });
+			var done = Job.Define("done", _ => { });
 
-			await h.Worker.EnqueueAsync("done");
+			await h.Worker.EnqueueAsync(done);
 			await h.Worker.TickAsync();
 			Assert.Equal(1, h.Store.CountByStatus(JobStatus.Succeeded));
 
@@ -169,27 +386,24 @@ internal static class ExecutionTests
 			var finished = false;
 			var stolen = 0;
 
-			var busy = new HandlerRegistry();
-			busy.Register("slow", async (_, _) =>
+			var busy = Job.Define<object?>("slow", async (_, _) =>
 			{
 				await Task.Delay(600);
 				finished = true;
 			});
-
-			var thief = new HandlerRegistry();
-			thief.Register("slow", (_, _) => Interlocked.Increment(ref stolen));
+			var thief = Job.Define("slow", _ => Interlocked.Increment(ref stolen));
 
 			await using var owner = new Worker(new WorkerOptions
 			{
-				Store = store, Registry = busy, Owner = "owner",
+				Store = store, Jobs = [busy], Owner = "owner",
 				LeaseMs = 200, HeartbeatMs = 50, PollIntervalMs = 20
 			});
 			await using var other = new Worker(new WorkerOptions
 			{
-				Store = store, Registry = thief, Owner = "other", LeaseMs = 200
+				Store = store, Jobs = [thief], Owner = "other", LeaseMs = 200
 			});
 
-			await owner.EnqueueAsync("slow");
+			await owner.EnqueueAsync(busy);
 			owner.Start();
 
 			// Well past the lease, so without renewal this would already be stealable.
@@ -208,22 +422,19 @@ internal static class ExecutionTests
 			var store = new InMemoryJobStore();
 			var stolen = 0;
 
-			var busy = new HandlerRegistry();
-			busy.Register("slow", async (_, _) => await Task.Delay(600));
-
-			var thief = new HandlerRegistry();
-			thief.Register("slow", (_, _) => Interlocked.Increment(ref stolen));
+			var busy = Job.Define<object?>("slow", async (_, _) => await Task.Delay(600));
+			var thief = Job.Define("slow", _ => Interlocked.Increment(ref stolen));
 
 			await using var owner = new Worker(new WorkerOptions
 			{
-				Store = store, Registry = busy, Owner = "owner", LeaseMs = 200
+				Store = store, Jobs = [busy], Owner = "owner", LeaseMs = 200
 			});
 			await using var other = new Worker(new WorkerOptions
 			{
-				Store = store, Registry = thief, Owner = "other", LeaseMs = 200
+				Store = store, Jobs = [thief], Owner = "other", LeaseMs = 200
 			});
 
-			await owner.EnqueueAsync("slow");
+			await owner.EnqueueAsync(busy);
 
 			// Deliberately not awaited: the tick is blocked on the handler, which
 			// is exactly why renewal cannot live inside it.
@@ -363,10 +574,10 @@ internal static class ExecutionTests
 		runner.TestAsync("runs a job and passes the payload through", async () =>
 		{
 			var h = NewHarness();
-			var seen = new List<(object? Payload, int Attempt)>();
-			h.Registry.Register("greet", (payload, ctx) => seen.Add((payload, ctx.Attempt)));
+			var seen = new List<(string? Payload, int Attempt)>();
+			var greet = Job.Define<string>("greet", (payload, ctx) => seen.Add((payload, ctx.Attempt)));
 
-			await h.Worker.EnqueueAsync("greet", "asgard");
+			await h.Worker.EnqueueAsync(greet, "asgard");
 			var result = await h.Worker.TickAsync();
 
 			Assert.Equal(1, result.Claimed);
@@ -381,9 +592,9 @@ internal static class ExecutionTests
 		{
 			var h = NewHarness();
 			var runs = 0;
-			h.Registry.Register("later", (_, _) => runs++);
+			var later = Job.Define("later", _ => runs++);
 
-			await h.Worker.EnqueueAsync("later", runAtMs: T0 + 10_000);
+			await h.Worker.EnqueueAsync(later, runAtMs: T0 + 10_000);
 			Assert.Equal(0, (await h.Worker.TickAsync()).Claimed);
 
 			h.Clock.Advance(10_000);
@@ -394,7 +605,7 @@ internal static class ExecutionTests
 		runner.TestAsync("a run for an unregistered handler is left alone, not claimed", async () =>
 		{
 			var h = NewHarness();
-			await h.Worker.EnqueueAsync("missing");
+			await h.Worker.EnqueueByNameAsync("missing");
 
 			Assert.Equal(0, (await h.Worker.TickAsync()).Claimed, "another worker may be able to run it");
 			Assert.Equal(1, h.Store.CountByStatus(JobStatus.Pending));
@@ -403,10 +614,10 @@ internal static class ExecutionTests
 		runner.TestAsync("only registered handlers are claimed when others are due", async () =>
 		{
 			var h = NewHarness();
-			h.Registry.Register("known", (_, _) => { });
+			var known = Job.Define("known", _ => { });
 
-			await h.Worker.EnqueueAsync("missing");
-			await h.Worker.EnqueueAsync("known");
+			await h.Worker.EnqueueByNameAsync("missing");
+			await h.Worker.EnqueueAsync(known);
 
 			var result = await h.Worker.TickAsync();
 			Assert.Equal(1, result.Claimed);
@@ -417,7 +628,7 @@ internal static class ExecutionTests
 		runner.TestAsync("with filtering off an unknown handler goes to dead", async () =>
 		{
 			var h = NewHarness(claimOnlyRegisteredHandlers: false);
-			await h.Worker.EnqueueAsync("missing");
+			await h.Worker.EnqueueByNameAsync("missing");
 
 			Assert.Equal(1, (await h.Worker.TickAsync()).Dead);
 			Assert.Contains("no handler registered", h.Store.ByStatus(JobStatus.Dead)[0].LastError);
@@ -432,13 +643,13 @@ internal static class ExecutionTests
 		{
 			var h = NewHarness();
 			var attempts = 0;
-			h.Registry.Register("flaky", (_, _) =>
+			var flaky = Job.Define("flaky", _ =>
 			{
 				attempts++;
 				if (attempts < 3) throw new Exception($"boom {attempts}");
 			});
 
-			await h.Worker.EnqueueAsync("flaky");
+			await h.Worker.EnqueueAsync(flaky);
 
 			Assert.Equal(1, (await h.Worker.TickAsync()).Retried);
 			Assert.Equal(T0 + 1_000, h.Store.All()[0].RunAtMs, "first retry waits one base delay");
@@ -456,9 +667,9 @@ internal static class ExecutionTests
 		runner.TestAsync("dead letters once attempts run out", async () =>
 		{
 			var h = NewHarness();
-			h.Registry.Register("doomed", (_, _) => throw new Exception("always fails"));
+			var doomed = Job.Define("doomed", _ => throw new Exception("always fails"));
 
-			await h.Worker.EnqueueAsync("doomed", maxAttempts: 2);
+			await h.Worker.EnqueueAsync(doomed, maxAttempts: 2);
 
 			Assert.Equal(1, (await h.Worker.TickAsync()).Retried);
 			h.Clock.Advance(1_000);
@@ -472,9 +683,9 @@ internal static class ExecutionTests
 		runner.TestAsync("a permanent error skips the remaining attempts", async () =>
 		{
 			var h = NewHarness();
-			h.Registry.Register("bad-payload", (_, _) => throw new PermanentJobException("payload is malformed"));
+			var bad = Job.Define("bad-payload", _ => throw new PermanentJobException("payload is malformed"));
 
-			await h.Worker.EnqueueAsync("bad-payload", maxAttempts: 5);
+			await h.Worker.EnqueueAsync(bad, maxAttempts: 5);
 			Assert.Equal(1, (await h.Worker.TickAsync()).Dead);
 
 			Assert.Equal(1, h.Store.ByStatus(JobStatus.Dead)[0].Attempt,
@@ -485,9 +696,9 @@ internal static class ExecutionTests
 		{
 			var seen = new List<string>();
 			var h = NewHarness(onError: (e, run) => seen.Add($"{e.Message}:{run?.Id}"));
-			h.Registry.Register("noisy", (_, _) => throw new Exception("kaboom"));
+			var noisy = Job.Define("noisy", _ => throw new Exception("kaboom"));
 
-			await h.Worker.EnqueueAsync("noisy");
+			await h.Worker.EnqueueAsync(noisy);
 			await h.Worker.TickAsync();
 
 			Assert.Sequence(["kaboom:run-1"], seen);
@@ -502,12 +713,9 @@ internal static class ExecutionTests
 		{
 			var h = NewHarness();
 			var fired = new List<long>();
-			h.Registry.Register("sweep", (_, _) => fired.Add(h.Clock.NowMs));
+			var sweep = Job.Define("sweep", _ => fired.Add(h.Clock.NowMs));
 
-			h.Worker.AddSchedule(new ScheduleDefinition
-			{
-				Name = "sweep-every-30s", Expr = "on second=*/30", Handler = "sweep"
-			});
+			h.Worker.AddSchedule(ScheduleDefinition.For("sweep-every-30s", "on second=*/30", sweep));
 
 			Assert.Equal(0, (await h.Worker.TickAsync()).Materialized, "nothing is due yet");
 
@@ -528,12 +736,9 @@ internal static class ExecutionTests
 		{
 			var h = NewHarness();
 			var runs = 0;
-			h.Registry.Register("sync", (_, _) => runs++);
+			var sync = Job.Define("sync", _ => runs++);
 
-			h.Worker.AddSchedule(new ScheduleDefinition
-			{
-				Name = "sync-loop", Expr = "every 10s", Handler = "sync"
-			});
+			h.Worker.AddSchedule(ScheduleDefinition.For("sync-loop", "every 10s", sync));
 
 			h.Clock.Advance(10_000);
 			Assert.Equal(1, (await h.Worker.TickAsync()).Succeeded);
@@ -547,12 +752,10 @@ internal static class ExecutionTests
 		runner.TestAsync("a schedule survives a run that dead letters", async () =>
 		{
 			var h = NewHarness();
-			h.Registry.Register("brittle", (_, _) => throw new PermanentJobException("nope"));
+			var brittle = Job.Define("brittle", _ => throw new PermanentJobException("nope"));
 
-			h.Worker.AddSchedule(new ScheduleDefinition
-			{
-				Name = "brittle-loop", Expr = "every 10s", Handler = "brittle", MaxAttempts = 1
-			});
+			h.Worker.AddSchedule(
+				ScheduleDefinition.For("brittle-loop", "every 10s", brittle, maxAttempts: 1));
 
 			h.Clock.Advance(10_000);
 			Assert.Equal(1, (await h.Worker.TickAsync()).Dead);
@@ -564,11 +767,9 @@ internal static class ExecutionTests
 			async Task<int> Missed(MisfirePolicy misfire)
 			{
 				var h = NewHarness();
-				h.Registry.Register("catch-up", (_, _) => { });
-				h.Worker.AddSchedule(new ScheduleDefinition
-				{
-					Name = "every-10s", Expr = "on second=*/10", Handler = "catch-up", Misfire = misfire
-				});
+				var catchUp = Job.Define("catch-up", _ => { });
+				h.Worker.AddSchedule(ScheduleDefinition.For(
+					"every-10s", "on second=*/10", catchUp, misfire: misfire));
 
 				h.Clock.Advance(35_000);
 				return (await h.Worker.TickAsync()).Materialized;
@@ -583,22 +784,18 @@ internal static class ExecutionTests
 		{
 			var clock = new FakeClock(T0);
 			var store = new InMemoryJobStore();
-			var registry = new HandlerRegistry();
-			registry.Register("shared", (_, _) => { });
+			var shared = Job.Define("shared", _ => { });
 
 			WorkerOptions Options(string owner) => new()
 			{
-				Store = store, Registry = registry, Clock = clock,
+				Store = store, Jobs = [shared], Clock = clock,
 				Owner = owner, Retry = NoJitter, Random = () => 0.5
 			};
 
 			var a = new Worker(Options("a"));
 			var b = new Worker(Options("b"));
 
-			var definition = new ScheduleDefinition
-			{
-				Name = "shared-sweep", Expr = "on second=*/30", Handler = "shared"
-			};
+			var definition = ScheduleDefinition.For("shared-sweep", "on second=*/30", shared);
 			a.AddSchedule(definition);
 			b.AddSchedule(definition);
 
@@ -620,9 +817,9 @@ internal static class ExecutionTests
 		{
 			var h = NewHarness();
 			var ran = new TaskCompletionSource();
-			h.Registry.Register("tick", (_, _) => ran.TrySetResult());
+			var ticker = Job.Define("tick", _ => ran.TrySetResult());
 
-			await h.Worker.EnqueueAsync("tick");
+			await h.Worker.EnqueueAsync(ticker);
 			h.Worker.Start();
 
 			// Wait for the loop to actually reach the handler rather than assuming

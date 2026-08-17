@@ -15,42 +15,38 @@ public sealed class JobContext
 	// Cancelled on worker shutdown.
 	public required CancellationToken CancellationToken { get; init; }
 
-	// Extends the lease. A handler that may outlive the lease has to call this
-	// periodically, otherwise the reaper will hand its run to another worker
-	// while it is still running. Returns false when the lease is already gone,
-	// at which point the handler should stop.
+	// Extends the lease. A worker started with Start renews leases for you, so
+	// this is only needed when driving TickAsync directly, or to check whether
+	// the lease is still held. Returns false when it is not, at which point the
+	// handler should stop because another worker has taken the run.
 	public required Func<Task<bool>> Heartbeat { get; init; }
 }
 
-public delegate Task JobHandler(object? payload, JobContext ctx);
-
-// Handlers are looked up by name at execution time rather than captured as
-// closures, because a durable store holds a name and a payload, not a function.
-// That is also what lets a run enqueued by one process execute in another.
+// Jobs are looked up by name at execution time rather than captured as closures,
+// because a durable store holds a name and a payload, not a function. That is
+// also what lets a run enqueued by one process execute in another.
 public sealed class HandlerRegistry
 {
-	private readonly Dictionary<string, JobHandler> _handlers = [];
+	private readonly Dictionary<string, JobDefinition> _jobs = [];
 
-	public HandlerRegistry Register(string name, JobHandler handler)
+	public HandlerRegistry Register(JobDefinition definition)
 	{
-		if (!_handlers.TryAdd(name, handler))
+		if (!_jobs.TryAdd(definition.Name, definition))
 		{
-			throw new InvalidOperationException($"handler '{name}' is already registered");
+			throw new InvalidOperationException($"job '{definition.Name}' is already registered");
 		}
 		return this;
 	}
 
-	// Convenience overload for handlers that do not need to await anything.
-	public HandlerRegistry Register(string name, Action<object?, JobContext> handler)
-		=> Register(name, (payload, ctx) =>
-		{
-			handler(payload, ctx);
-			return Task.CompletedTask;
-		});
+	public HandlerRegistry RegisterAll(IEnumerable<JobDefinition> definitions)
+	{
+		foreach (var definition in definitions) Register(definition);
+		return this;
+	}
 
-	public JobHandler? Resolve(string name) => _handlers.GetValueOrDefault(name);
+	public JobDefinition? Resolve(string name) => _jobs.GetValueOrDefault(name);
 
-	public bool Has(string name) => _handlers.ContainsKey(name);
+	public bool Has(string name) => _jobs.ContainsKey(name);
 
-	public IReadOnlyList<string> Names() => _handlers.Keys.ToList();
+	public IReadOnlyList<string> Names() => _jobs.Keys.ToList();
 }

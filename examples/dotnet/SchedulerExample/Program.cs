@@ -82,15 +82,14 @@ static void Preview(string expr, int count = 3)
 
 static async Task RunWorker()
 {
-	var store = new InMemoryJobStore();
-	var registry = new HandlerRegistry();
-
-	registry.Register("heartbeat", (payload, _) =>
-		Console.WriteLine($"  heartbeat {payload} at {DateTimeOffset.UtcNow:O}"));
+	// A job definition ties a name, a payload type and a handler together, so
+	// enqueueing one cannot disagree with the handler that will receive it.
+	var heartbeat = Job.Define<string>("heartbeat", (label, _) =>
+		Console.WriteLine($"  heartbeat {label} at {DateTimeOffset.UtcNow:O}"));
 
 	// Fails twice, then succeeds. The worker backs off between attempts.
 	var attempts = 0;
-	registry.Register("flaky", (_, ctx) =>
+	var flaky = Job.Define("flaky", ctx =>
 	{
 		attempts++;
 		Console.WriteLine($"  flaky attempt {ctx.Attempt} of {ctx.MaxAttempts}");
@@ -99,13 +98,19 @@ static async Task RunWorker()
 
 	// Cannot succeed no matter how many times it runs, so it skips its remaining
 	// attempts and goes straight to dead.
-	registry.Register("malformed", (_, _) =>
-		throw new PermanentJobException("payload is missing a realm id"));
+	var malformed = Job.Define("malformed",
+		_ => throw new PermanentJobException("payload is missing a realm id"));
 
-	await using var worker = new Worker(new WorkerOptions
+	var store = new InMemoryJobStore();
+
+	// One call wires up the store, the jobs and the schedules, and applies the
+	// store's schema when it has one. Swap in PostgresJobStore.Create(connectionString)
+	// and the same code becomes durable and multi replica.
+	await using var worker = await Worker.CreateAsync(new WorkerOptions
 	{
 		Store = store,
-		Registry = registry,
+		Jobs = [heartbeat, flaky, malformed],
+		Schedules = [ScheduleDefinition.For("heartbeat-every-second", "every 1s", heartbeat, "tide")],
 		Concurrency = 2,
 		PollIntervalMs = 100,
 		Retry = new RetryPolicy
@@ -114,26 +119,18 @@ static async Task RunWorker()
 		}
 	});
 
-	worker.AddSchedule(new ScheduleDefinition
-	{
-		Name = "heartbeat-every-second",
-		Expr = "every 1s",
-		Handler = "heartbeat",
-		Payload = "tide"
-	});
-
-	await worker.EnqueueAsync("flaky");
-	await worker.EnqueueAsync("malformed");
+	await worker.EnqueueAsync(flaky);
+	await worker.EnqueueAsync(malformed);
 
 	worker.Start();
 	await Task.Delay(TimeSpan.FromSeconds(3));
 	await worker.StopAsync();
 
+	var stats = await worker.StatsAsync();
 	Console.WriteLine("\n--- final state ---");
-	foreach (var status in new[] { JobStatus.Succeeded, JobStatus.Pending, JobStatus.Dead })
-	{
-		Console.WriteLine($"  {status,-10} {store.CountByStatus(status)}");
-	}
+	Console.WriteLine($"  pending    {stats.Pending}");
+	Console.WriteLine($"  succeeded  {stats.Succeeded}");
+	Console.WriteLine($"  dead       {stats.Dead}");
 	foreach (var run in store.ByStatus(JobStatus.Dead))
 	{
 		Console.WriteLine($"  dead: {run.Handler} after {run.Attempt} attempt(s), {run.LastError}");

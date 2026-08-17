@@ -17,7 +17,7 @@ namespace Tide.Asgard.Scheduler.Postgres;
 //
 // Or hand it a data source the application already owns, in which case the
 // caller keeps responsibility for disposing it.
-public sealed class PostgresJobStore : IJobStore, IAsyncDisposable
+public sealed class PostgresJobStore : IJobStore, ISchemaAwareJobStore, IAsyncDisposable
 {
 	private const string Columns = """
 		id, schedule_id, handler, payload, idempotency_key, run_at_ms, status,

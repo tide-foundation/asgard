@@ -391,12 +391,11 @@ internal static class PostgresTests
 		runner.TestAsync("runs a job end to end", async () =>
 		{
 			await Reset();
-			var registry = new HandlerRegistry();
 			var seen = new List<string>();
-			registry.Register("greet", (payload, _) => seen.Add(payload?.ToString() ?? "null"));
+			var greet = Job.Define<string>("greet", (payload, _) => seen.Add(payload));
 
-			var worker = NewWorker(store, registry, new FakeClock(T0), "solo");
-			await worker.EnqueueAsync("greet", "asgard");
+			var worker = NewWorker(store, [greet], new FakeClock(T0), "solo");
+			await worker.EnqueueAsync(greet, "asgard");
 
 			Assert.Equal(1, (await worker.TickAsync()).Succeeded);
 			Assert.Equal(1, seen.Count);
@@ -406,16 +405,15 @@ internal static class PostgresTests
 		{
 			await Reset();
 			var clock = new FakeClock(T0);
-			var registry = new HandlerRegistry();
 			var attempts = 0;
-			registry.Register("flaky", (_, _) =>
+			var flaky = Job.Define("flaky", _ =>
 			{
 				attempts++;
 				if (attempts < 3) throw new Exception("not yet");
 			});
 
-			var worker = NewWorker(store, registry, clock, "solo");
-			var run = await worker.EnqueueAsync("flaky");
+			var worker = NewWorker(store, [flaky], clock, "solo");
+			var run = await worker.EnqueueAsync(flaky);
 
 			Assert.Equal(1, (await worker.TickAsync()).Retried);
 			Assert.Equal(T0 + 1_000, (await store.GetAsync(run!.Id))!.RunAtMs);
@@ -432,17 +430,13 @@ internal static class PostgresTests
 		{
 			await Reset();
 			var clock = new FakeClock(T0);
-			var registry = new HandlerRegistry();
 			var runs = 0;
-			registry.Register("sweep", (_, _) => Interlocked.Increment(ref runs));
+			var sweep = Job.Define("sweep", _ => Interlocked.Increment(ref runs));
 
-			var a = NewWorker(store, registry, clock, "a");
-			var b = NewWorker(store, registry, clock, "b");
+			var a = NewWorker(store, [sweep], clock, "a");
+			var b = NewWorker(store, [sweep], clock, "b");
 
-			var definition = new ScheduleDefinition
-			{
-				Name = "shared-sweep", Expr = "on second=*/30", Handler = "sweep"
-			};
+			var definition = ScheduleDefinition.For("shared-sweep", "on second=*/30", sweep);
 			a.AddSchedule(definition);
 			b.AddSchedule(definition);
 
@@ -456,11 +450,11 @@ internal static class PostgresTests
 	}
 
 	private static Worker NewWorker(
-		IJobStore store, HandlerRegistry registry, IClock clock, string owner)
+		IJobStore store, IReadOnlyList<JobDefinition> jobs, IClock clock, string owner)
 		=> new(new WorkerOptions
 		{
 			Store = store,
-			Registry = registry,
+			Jobs = jobs,
 			Clock = clock,
 			Owner = owner,
 			LeaseMs = 30_000,

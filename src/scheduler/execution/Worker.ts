@@ -6,6 +6,7 @@ import { parseSchedule } from "../expression/Parser";
 import { IntervalMode, ScheduleSpec } from "../expression/Spec";
 import { Clock, systemClock } from "./Clock";
 import { HandlerRegistry, JobContext } from "./HandlerRegistry";
+import { JobDefinition, PayloadError } from "./JobDefinition";
 import { JobRun, JobRunRequest } from "./JobRun";
 import { JobStore, JobStoreStats } from "./JobStore";
 import { DEFAULT_RETRY_POLICY, PermanentJobError, RetryPolicy, retryDelayMs } from "./RetryPolicy";
@@ -20,16 +21,24 @@ export enum MisfirePolicy {
     Skip = "skip"
 }
 
-export interface ScheduleDefinition {
+export interface ScheduleDefinition<TPayload = void> {
     // Unique. Also forms the idempotency key of every run it materializes, so
     // two workers materializing the same occurrence produce the same key and
     // exactly one insert survives.
     readonly name: string;
     readonly expr: string;
-    readonly handler: string;
-    readonly payload?: unknown;
+    // The job to run. Pass the definition rather than its name so the payload
+    // below is checked against it.
+    readonly job: JobDefinition<TPayload>;
+    readonly payload?: TPayload;
     readonly maxAttempts?: number;
     readonly misfire?: MisfirePolicy;
+}
+
+export interface EnqueueOptions {
+    readonly runAtMs?: number;
+    readonly maxAttempts?: number;
+    readonly idempotencyKey?: string;
 }
 
 export interface RetentionPolicy {
@@ -46,7 +55,12 @@ export interface RetentionPolicy {
 
 export interface WorkerOptions {
     readonly store: JobStore;
-    readonly registry: HandlerRegistry;
+    // Jobs to register. Either give these and let the worker build a registry,
+    // or bring your own registry, or both.
+    readonly jobs?: readonly JobDefinition<any>[];
+    readonly registry?: HandlerRegistry;
+    // Recurring schedules to register up front.
+    readonly schedules?: readonly ScheduleDefinition<any>[];
     readonly clock?: Clock;
     // Identifies this worker in lease records. Defaults to a random label.
     readonly owner?: string;
@@ -77,7 +91,7 @@ export interface TickResult {
 }
 
 interface TrackedSchedule {
-    readonly def: ScheduleDefinition;
+    readonly def: ScheduleDefinition<any>;
     readonly spec: ScheduleSpec;
     // Null means the next occurrence is chained on settle rather than
     // materialized on a tick.
@@ -113,7 +127,8 @@ export class Worker {
 
     constructor(options: WorkerOptions) {
         this.store = options.store;
-        this.registry = options.registry;
+        this.registry = options.registry ?? new HandlerRegistry();
+        if (options.jobs !== undefined) this.registry.registerAll(options.jobs);
         this.clock = options.clock ?? systemClock;
         this.owner = options.owner ?? `worker-${Math.random().toString(36).slice(2, 10)}`;
         this.concurrency = Math.max(1, options.concurrency ?? 4);
@@ -125,13 +140,16 @@ export class Worker {
         this.retry = options.retry ?? DEFAULT_RETRY_POLICY;
         this.random = options.random ?? Math.random;
         this.onError = options.onError ?? (() => { });
+
+        for (const schedule of options.schedules ?? []) this.addSchedule(schedule);
     }
 
     // Registers a recurring schedule. Safe to call before or after start.
-    addSchedule(def: ScheduleDefinition): void {
+    addSchedule<TPayload>(def: ScheduleDefinition<TPayload>): void {
         if (this.schedules.has(def.name)) {
             throw new Error(`schedule '${def.name}' is already registered`);
         }
+        if (!this.registry.has(def.job.name)) this.registry.register(def.job);
 
         const spec = parseSchedule(def.expr);
 
@@ -148,11 +166,28 @@ export class Worker {
         });
     }
 
-    // Queues a one off job.
-    async enqueue(
-        handler: string,
-        payload?: unknown,
-        options?: { runAtMs?: number; maxAttempts?: number; idempotencyKey?: string }
+    // Queues a one off job. Pass the definition, not its name, so the payload is
+    // checked against the handler that will receive it.
+    enqueue(
+        job: JobDefinition<void>, payload?: undefined, options?: EnqueueOptions
+    ): Promise<JobRun | null>;
+    enqueue<TPayload>(
+        job: JobDefinition<TPayload>, payload: TPayload, options?: EnqueueOptions
+    ): Promise<JobRun | null>;
+    enqueue<TPayload>(
+        job: JobDefinition<TPayload>, payload?: TPayload, options?: EnqueueOptions
+    ): Promise<JobRun | null> {
+        if (!this.registry.has(job.name)) this.registry.register(job);
+        return this.enqueueByName(job.name, payload, {
+            maxAttempts: job.maxAttempts,
+            ...options
+        });
+    }
+
+    // Escape hatch for queueing a job whose definition is not to hand, for
+    // example from an admin endpoint that takes a name off a request.
+    async enqueueByName(
+        handler: string, payload?: unknown, options?: EnqueueOptions
     ): Promise<JobRun | null> {
         return this.store.enqueue({
             handler,
@@ -301,7 +336,7 @@ export class Worker {
 
     private requestFor(tracked: TrackedSchedule, fireAtMs: number): JobRunRequest {
         return {
-            handler: tracked.def.handler,
+            handler: tracked.def.job.name,
             payload: tracked.def.payload,
             // Jitter moves when the run happens but not its identity. Keying on
             // the jittered time would let two workers compute different keys for
@@ -309,7 +344,7 @@ export class Worker {
             runAtMs: fireAtMs + this.jitterFor(tracked.spec),
             scheduleId: tracked.def.name,
             idempotencyKey: `${tracked.def.name}:${fireAtMs}`,
-            maxAttempts: tracked.def.maxAttempts ?? this.retry.maxAttempts
+            maxAttempts: tracked.def.maxAttempts ?? tracked.def.job.maxAttempts ?? this.retry.maxAttempts
         };
     }
 
@@ -333,9 +368,9 @@ export class Worker {
     }
 
     private async dispatch(run: JobRun): Promise<"succeeded" | "retried" | "dead"> {
-        const handler = this.registry.resolve(run.handler);
+        const job = this.registry.resolve(run.handler);
 
-        if (handler === undefined) {
+        if (job === undefined) {
             // Retrying cannot help in this process. A durable multi process
             // deployment should instead claim only handlers it knows about.
             const at = this.clock.nowMs();
@@ -353,9 +388,20 @@ export class Worker {
             heartbeat: () => this.store.heartbeat(run.id, this.clock.nowMs() + this.leaseMs)
         };
 
+        let payload: unknown;
+        try {
+            // Validating on dequeue rather than on enqueue is what catches a
+            // payload written by an older deploy meeting a handler that has
+            // since changed shape.
+            payload = job.parse === undefined ? run.payload : job.parse(run.payload);
+        } catch (error) {
+            // Retrying cannot change what is already stored.
+            return this.settleFailure(run, new PayloadError(job.name, error), true);
+        }
+
         this.inFlight.add(run.id);
         try {
-            await handler(run.payload, ctx);
+            await job.handler(payload, ctx);
         } catch (error) {
             return this.settleFailure(run, error);
         } finally {
@@ -367,12 +413,13 @@ export class Worker {
         return "succeeded";
     }
 
-    private async settleFailure(run: JobRun, error: unknown): Promise<"retried" | "dead"> {
+    private async settleFailure(
+        run: JobRun, error: unknown, forcePermanent = false): Promise<"retried" | "dead"> {
         const at = this.clock.nowMs();
         const message = error instanceof Error ? error.message : String(error);
         this.onError(error, run);
 
-        const permanent = error instanceof PermanentJobError;
+        const permanent = forcePermanent || error instanceof PermanentJobError;
         if (!permanent && run.attempt < run.maxAttempts) {
             const delay = retryDelayMs(this.retry, run.attempt, this.random);
             await this.store.retry(run.id, message, at + delay, at);

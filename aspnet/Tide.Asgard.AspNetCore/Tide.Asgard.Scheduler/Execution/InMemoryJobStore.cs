@@ -1,6 +1,8 @@
 // Copyright (c) Tide Foundation Limited. All rights reserved.
 // Licensed under the Tide Community Open Code License. See LICENSE in the project root.
 
+using System.Text.Json;
+
 namespace Tide.Asgard.Scheduler.Execution;
 
 // Reference implementation and test double. Everything survives only as long as
@@ -248,7 +250,7 @@ public sealed class InMemoryJobStore : IJobStore
 			Id = $"run-{_sequence}",
 			ScheduleId = request.ScheduleId,
 			Handler = request.Handler,
-			Payload = request.Payload,
+			Payload = NormalizePayload(request.Payload),
 			IdempotencyKey = request.IdempotencyKey,
 			RunAtMs = request.RunAtMs,
 			Status = JobStatus.Pending,
@@ -265,4 +267,13 @@ public sealed class InMemoryJobStore : IJobStore
 
 	// Sequential ids compared numerically so run-10 sorts after run-9.
 	private static int SequenceOf(string id) => int.Parse(id.AsSpan(4));
+
+	private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+	// Payloads go through JSON here even though nothing forces it, so that a
+	// handler sees exactly what it would see through a durable store. Without
+	// this a job would work in tests and then meet a DateTime turned into a
+	// string the first time it ran against Postgres.
+	private static object? NormalizePayload(object? payload)
+		=> payload is null ? null : JsonSerializer.SerializeToNode(payload, JsonOptions);
 }

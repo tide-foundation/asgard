@@ -12,7 +12,7 @@
 const path = require("node:path");
 const {
     parseSchedule, nextFire, ScheduleParseError,
-    HandlerRegistry, InMemoryJobStore, Worker, PermanentJobError, JobStatus
+    InMemoryJobStore, createScheduler, defineJob, PermanentJobError, JobStatus
 } = require(path.join(__dirname, "..", "..", "dist", "cjs", "index.js"));
 
 // 1. Preview when a schedule will fire.
@@ -71,53 +71,59 @@ for (const bad of ["on hour=25", "on day=1 dow=mon", "every 5x", "on nth=2 hour=
 // replicas.
 
 async function runWorker() {
-    const store = new InMemoryJobStore();
-    const registry = new HandlerRegistry();
-
-    registry.register("heartbeat", (payload) => {
-        console.log(`  heartbeat ${payload.label} at ${new Date().toISOString()}`);
+    // A job definition ties a name, a payload type and a handler together, so
+    // enqueueing one cannot disagree with the handler that will receive it.
+    const heartbeat = defineJob({
+        name: "heartbeat",
+        handler: label => console.log(`  heartbeat ${label} at ${new Date().toISOString()}`)
     });
 
     // Fails twice, then succeeds. The worker backs off between attempts.
     let attempts = 0;
-    registry.register("flaky", (_, ctx) => {
-        attempts += 1;
-        console.log(`  flaky attempt ${ctx.attempt} of ${ctx.maxAttempts}`);
-        if (attempts < 3) throw new Error("upstream not ready");
+    const flaky = defineJob({
+        name: "flaky",
+        handler: (_, ctx) => {
+            attempts += 1;
+            console.log(`  flaky attempt ${ctx.attempt} of ${ctx.maxAttempts}`);
+            if (attempts < 3) throw new Error("upstream not ready");
+        }
     });
 
-    // Cannot succeed no matter how many times it runs, so it skips its
-    // remaining attempts and goes straight to dead.
-    registry.register("malformed", () => {
-        throw new PermanentJobError("payload is missing a realm id");
+    // Cannot succeed no matter how many times it runs, so it skips its remaining
+    // attempts and goes straight to dead.
+    const malformed = defineJob({
+        name: "malformed",
+        handler: () => { throw new PermanentJobError("payload is missing a realm id"); }
     });
 
-    const worker = new Worker({
+    const store = new InMemoryJobStore();
+
+    // One call wires up the store, the jobs and the schedules, and applies the
+    // store's schema when it has one. Swap in a PostgresJobStore and the same
+    // code becomes durable and multi replica.
+    const worker = await createScheduler({
         store,
-        registry,
+        jobs: [heartbeat, flaky, malformed],
+        schedules: [
+            { name: "heartbeat-every-second", expr: "every 1s", job: heartbeat, payload: "tide" }
+        ],
         concurrency: 2,
         pollIntervalMs: 100,
         retry: { maxAttempts: 4, baseMs: 200, capMs: 5_000, multiplier: 2, jitter: "none" }
     });
 
-    worker.addSchedule({
-        name: "heartbeat-every-second",
-        expr: "every 1s",
-        handler: "heartbeat",
-        payload: { label: "tide" }
-    });
-
-    await worker.enqueue("flaky");
-    await worker.enqueue("malformed");
+    await worker.enqueue(flaky);
+    await worker.enqueue(malformed);
 
     worker.start();
     await new Promise(resolve => setTimeout(resolve, 3_000));
     await worker.stop();
 
+    const stats = await worker.stats();
     console.log("\n--- final state ---");
-    for (const status of [JobStatus.Succeeded, JobStatus.Pending, JobStatus.Dead]) {
-        console.log(`  ${status.padEnd(10)} ${store.countByStatus(status)}`);
-    }
+    console.log(`  pending    ${stats.pending}`);
+    console.log(`  succeeded  ${stats.succeeded}`);
+    console.log(`  dead       ${stats.dead}`);
     for (const run of store.byStatus(JobStatus.Dead)) {
         console.log(`  dead: ${run.handler} after ${run.attempt} attempt(s), ${run.lastError}`);
     }

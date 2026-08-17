@@ -23,10 +23,47 @@ public sealed record ScheduleDefinition
 	// exactly one insert survives.
 	public required string Name { get; init; }
 	public required string Expr { get; init; }
-	public required string Handler { get; init; }
+
+	// The job to run. Prefer the For factory below, which checks the payload
+	// against the job rather than taking it as a bare object.
+	public required JobDefinition Job { get; init; }
 	public object? Payload { get; init; }
 	public int? MaxAttempts { get; init; }
 	public MisfirePolicy Misfire { get; init; } = MisfirePolicy.FireOnce;
+
+	// Type checked construction. The record itself cannot be generic because a
+	// worker holds a list of schedules with different payload types.
+	public static ScheduleDefinition For<TPayload>(
+		string name,
+		string expr,
+		JobDefinition<TPayload> job,
+		TPayload payload,
+		int? maxAttempts = null,
+		MisfirePolicy misfire = MisfirePolicy.FireOnce)
+		=> new()
+		{
+			Name = name,
+			Expr = expr,
+			Job = job,
+			Payload = payload,
+			MaxAttempts = maxAttempts,
+			Misfire = misfire
+		};
+
+	public static ScheduleDefinition For(
+		string name,
+		string expr,
+		JobDefinition job,
+		int? maxAttempts = null,
+		MisfirePolicy misfire = MisfirePolicy.FireOnce)
+		=> new()
+		{
+			Name = name,
+			Expr = expr,
+			Job = job,
+			MaxAttempts = maxAttempts,
+			Misfire = misfire
+		};
 }
 
 public sealed record RetentionPolicy
@@ -45,7 +82,15 @@ public sealed record RetentionPolicy
 public sealed record WorkerOptions
 {
 	public required IJobStore Store { get; init; }
-	public required HandlerRegistry Registry { get; init; }
+
+	// Jobs to register. Either give these and let the worker build a registry,
+	// or bring your own registry, or both.
+	public IReadOnlyList<JobDefinition>? Jobs { get; init; }
+	public HandlerRegistry? Registry { get; init; }
+
+	// Recurring schedules to register up front.
+	public IReadOnlyList<ScheduleDefinition>? Schedules { get; init; }
+
 	public IClock Clock { get; init; } = SystemClock.Instance;
 
 	// Identifies this worker in lease records. Defaults to a random label.
@@ -101,10 +146,30 @@ public sealed class Worker : IAsyncDisposable
 	private Task? _renewal;
 	private long _nextPurgeAtMs;
 
+	// Everything needed to go from nothing to a running scheduler in one call:
+	//
+	//   await using var scheduler = await Worker.CreateAsync(new WorkerOptions
+	//   {
+	//       Store = PostgresJobStore.Create(connectionString),
+	//       Jobs = [reconcileOrks],
+	//       Schedules = [ScheduleDefinition.For("nightly", "on 03:00", reconcileOrks, payload)]
+	//   });
+	//   scheduler.Start();
+	//
+	// The only thing this adds over the constructor is applying the store's
+	// schema when it has one, which is the step most easily forgotten and the one
+	// whose absence fails at the least convenient moment.
+	public static async Task<Worker> CreateAsync(WorkerOptions options, CancellationToken ct = default)
+	{
+		if (options.Store is ISchemaAwareJobStore schemaAware) await schemaAware.EnsureSchemaAsync(ct);
+		return new Worker(options);
+	}
+
 	public Worker(WorkerOptions options)
 	{
 		_store = options.Store;
-		_registry = options.Registry;
+		_registry = options.Registry ?? new HandlerRegistry();
+		if (options.Jobs is not null) _registry.RegisterAll(options.Jobs);
 		_clock = options.Clock;
 		_owner = options.Owner ?? $"worker-{Guid.NewGuid():N}"[..16];
 		_concurrency = Math.Max(1, options.Concurrency);
@@ -116,6 +181,8 @@ public sealed class Worker : IAsyncDisposable
 		_retry = options.Retry;
 		_random = options.Random ?? System.Random.Shared.NextDouble;
 		_onError = options.OnError ?? ((_, _) => { });
+
+		foreach (var schedule in options.Schedules ?? []) AddSchedule(schedule);
 	}
 
 	// Registers a recurring schedule. Safe to call before or after Start.
@@ -125,6 +192,7 @@ public sealed class Worker : IAsyncDisposable
 		{
 			throw new InvalidOperationException($"schedule '{definition.Name}' is already registered");
 		}
+		if (!_registry.Has(definition.Job.Name)) _registry.Register(definition.Job);
 
 		var spec = ScheduleParser.Parse(definition.Expr);
 
@@ -139,8 +207,37 @@ public sealed class Worker : IAsyncDisposable
 		};
 	}
 
-	// Queues a one off job.
+	// Queues a one off job. Pass the definition, not its name, so the payload is
+	// checked against the handler that will receive it.
+	public Task<JobRun?> EnqueueAsync<TPayload>(
+		JobDefinition<TPayload> job,
+		TPayload payload,
+		long? runAtMs = null,
+		int? maxAttempts = null,
+		string? idempotencyKey = null,
+		CancellationToken ct = default)
+	{
+		if (!_registry.Has(job.Name)) _registry.Register(job);
+		return EnqueueByNameAsync(
+			job.Name, payload, runAtMs, maxAttempts ?? job.MaxAttempts, idempotencyKey, ct);
+	}
+
+	// Queues a job that carries no payload.
 	public Task<JobRun?> EnqueueAsync(
+		JobDefinition job,
+		long? runAtMs = null,
+		int? maxAttempts = null,
+		string? idempotencyKey = null,
+		CancellationToken ct = default)
+	{
+		if (!_registry.Has(job.Name)) _registry.Register(job);
+		return EnqueueByNameAsync(
+			job.Name, null, runAtMs, maxAttempts ?? job.MaxAttempts, idempotencyKey, ct);
+	}
+
+	// Escape hatch for queueing a job whose definition is not to hand, for
+	// example from an admin endpoint that takes a name off a request.
+	public Task<JobRun?> EnqueueByNameAsync(
 		string handler,
 		object? payload = null,
 		long? runAtMs = null,
@@ -318,7 +415,7 @@ public sealed class Worker : IAsyncDisposable
 
 	private JobRunRequest RequestFor(TrackedSchedule tracked, long fireAtMs) => new()
 	{
-		Handler = tracked.Definition.Handler,
+		Handler = tracked.Definition.Job.Name,
 		Payload = tracked.Definition.Payload,
 		// Jitter moves when the run happens but not its identity. Keying on the
 		// jittered time would let two workers compute different keys for the same
@@ -326,7 +423,9 @@ public sealed class Worker : IAsyncDisposable
 		RunAtMs = fireAtMs + JitterFor(tracked.Spec),
 		ScheduleId = tracked.Definition.Name,
 		IdempotencyKey = $"{tracked.Definition.Name}:{fireAtMs}",
-		MaxAttempts = tracked.Definition.MaxAttempts ?? _retry.MaxAttempts
+		MaxAttempts = tracked.Definition.MaxAttempts
+			?? tracked.Definition.Job.MaxAttempts
+			?? _retry.MaxAttempts
 	};
 
 	private long JitterFor(ScheduleSpec spec)
@@ -347,9 +446,9 @@ public sealed class Worker : IAsyncDisposable
 
 	private async Task<Outcome> DispatchAsync(JobRun run, CancellationToken ct)
 	{
-		var handler = _registry.Resolve(run.Handler);
+		var job = _registry.Resolve(run.Handler);
 
-		if (handler is null)
+		if (job is null)
 		{
 			// Retrying cannot help in this process. A durable multi process
 			// deployment should instead claim only handlers it knows about.
@@ -369,10 +468,24 @@ public sealed class Worker : IAsyncDisposable
 			Heartbeat = () => _store.HeartbeatAsync(run.Id, _clock.NowMs + _leaseMs, ct)
 		};
 
+		object? payload;
+		try
+		{
+			// Converting is done before the handler runs and outside its try, so a
+			// payload that will not convert is never mistaken for a handler that
+			// threw. Retrying cannot change what is already stored, so it is
+			// permanent.
+			payload = job.ConvertPayload(run.Payload);
+		}
+		catch (Exception e)
+		{
+			return await SettleFailureAsync(run, new PayloadException(job.Name, e), ct, forcePermanent: true);
+		}
+
 		lock (_inFlightGate) _inFlight.Add(run.Id);
 		try
 		{
-			await handler(run.Payload, context);
+			await job.InvokeAsync(payload, context);
 		}
 		catch (Exception e)
 		{
@@ -388,12 +501,13 @@ public sealed class Worker : IAsyncDisposable
 		return Outcome.Succeeded;
 	}
 
-	private async Task<Outcome> SettleFailureAsync(JobRun run, Exception error, CancellationToken ct)
+	private async Task<Outcome> SettleFailureAsync(
+		JobRun run, Exception error, CancellationToken ct, bool forcePermanent = false)
 	{
 		var at = _clock.NowMs;
 		_onError(error, run);
 
-		if (error is not PermanentJobException && run.Attempt < run.MaxAttempts)
+		if (!forcePermanent && error is not PermanentJobException && run.Attempt < run.MaxAttempts)
 		{
 			var delay = _retry.DelayMs(run.Attempt, _random);
 			await _store.RetryAsync(run.Id, error.Message, at + delay, at, ct);

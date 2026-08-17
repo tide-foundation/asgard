@@ -71,56 +71,95 @@ Both runtimes emit the same code for the same input. `on hour=25` is
 
 ## Running jobs
 
-Three pieces. A **store** holds runs, a **registry** maps a job name to a
-function, and a **worker** claims due runs and dispatches them.
+A **job definition** ties a name, a payload type and a handler together. Pass the
+definition wherever the job is used and the compiler checks the payload for you.
 
 ```ts
-const store = new InMemoryJobStore();
-const registry = new HandlerRegistry();
-
-registry.register("reconcile-orks", async (payload, ctx) => {
-    await reconcile(payload.realmId);
+const reconcileOrks = defineJob({
+    name: "reconcile-orks",
+    handler: async (payload: { realmId: string }, ctx) => {
+        await reconcile(payload.realmId);
+    }
 });
 
-const worker = new Worker({ store, registry, concurrency: 4 });
-
-worker.addSchedule({
-    name: "nightly-reconcile",
-    expr: "on 03:00 tz=Australia/Sydney",
-    handler: "reconcile-orks",
-    payload: { realmId: "tide" }
+const worker = await createScheduler({
+    store: new PostgresJobStore(pool),
+    jobs: [reconcileOrks],
+    schedules: [{
+        name: "nightly-reconcile",
+        expr: "on 03:00 tz=Australia/Sydney",
+        job: reconcileOrks,
+        payload: { realmId: "tide" }
+    }],
+    concurrency: 4
 });
 
-await worker.enqueue("reconcile-orks", { realmId: "adhoc" });   // one off
+await worker.enqueue(reconcileOrks, { realmId: "adhoc" });  // checked
+await worker.enqueue(reconcileOrks, { realm: "adhoc" });    // compile error
 worker.start();
 ```
 
 ```csharp
-var store = new InMemoryJobStore();
-var registry = new HandlerRegistry();
+var reconcileOrks = Job.Define<ReconcilePayload>(
+    "reconcile-orks", async (payload, ctx) => await Reconcile(payload.RealmId));
 
-registry.Register("reconcile-orks", async (payload, ctx) => await Reconcile(payload));
-
-await using var worker = new Worker(new WorkerOptions
+await using var worker = await Worker.CreateAsync(new WorkerOptions
 {
-    Store = store, Registry = registry, Concurrency = 4
+    Store = PostgresJobStore.Create(connectionString),
+    Jobs = [reconcileOrks],
+    Schedules =
+    [
+        ScheduleDefinition.For(
+            "nightly-reconcile", "on 03:00 tz=Australia/Sydney",
+            reconcileOrks, new ReconcilePayload("tide"))
+    ],
+    Concurrency = 4
 });
 
-worker.AddSchedule(new ScheduleDefinition
-{
-    Name = "nightly-reconcile",
-    Expr = "on 03:00 tz=Australia/Sydney",
-    Handler = "reconcile-orks",
-    Payload = "tide"
-});
-
-await worker.EnqueueAsync("reconcile-orks", "adhoc");
+await worker.EnqueueAsync(reconcileOrks, new ReconcilePayload("adhoc"));
 worker.Start();
 ```
 
-Handlers are registered by **name**, not captured as closures, because a durable
-store holds a name and a payload rather than a function. That is also what lets a
-run enqueued by one process execute in another, including across runtimes.
+`createScheduler` and `Worker.CreateAsync` do one thing the constructor does not:
+apply the store's schema when it has one. That is the step most easily forgotten
+and the one whose absence fails at the least convenient moment.
+
+Jobs register themselves when enqueued or scheduled, so there is no separate
+registration step to keep in sync. `worker.enqueueByName` is the escape hatch for
+an admin endpoint that takes a job name off a request rather than having the
+definition to hand.
+
+Under the hood a job is still resolved by **name** at execution time, not
+captured as a closure, because a durable store holds a name and a payload rather
+than a function. That is what lets a run enqueued by one process execute in
+another, including across runtimes.
+
+### Payloads
+
+Payloads always travel as JSON, whichever store is in use. The in memory store
+round trips them through JSON deliberately, so a job cannot pass in tests and
+then meet a different shape the first time it runs against Postgres. A `Date`
+arrives as a string, a class instance as a plain object.
+
+In .NET the payload is deserialized into the definition's type for you. In
+TypeScript the raw value is passed through unless the definition supplies
+`parse`:
+
+```ts
+const strict = defineJob({
+    name: "strict",
+    parse: raw => {
+        if (typeof raw?.realmId !== "string") throw new Error("realmId must be a string");
+        return raw;
+    },
+    handler: payload => reconcile(payload.realmId)
+});
+```
+
+`parse` runs on **dequeue**, not on enqueue. That is the useful side: it catches
+a payload written by an older deploy meeting a handler that has since changed
+shape. A payload that fails to convert is dead lettered immediately rather than
+retried, because no number of attempts will change what is already stored.
 
 ### Making it durable
 
@@ -150,14 +189,13 @@ application already has and keep ownership. In TypeScript it accepts anything
 with a `query` method, which is what a node-postgres `Pool` or `Client` already
 is, so the package itself depends on nothing.
 
-Two behaviours change once jobs are durable:
+One behaviour changes once jobs are durable: **claiming becomes genuinely
+concurrent**. `SELECT ... FOR UPDATE SKIP LOCKED` means workers step over rows
+their peers hold rather than blocking, so adding replicas adds throughput instead
+of contention.
 
-- **Payloads round trip through `jsonb`.** A handler reading from Postgres gets
-  JSON back, not the object that was enqueued: a plain object in TypeScript, a
-  `JsonNode` in .NET.
-- **Claiming is genuinely concurrent.** `SELECT ... FOR UPDATE SKIP LOCKED` means
-  workers step over rows their peers hold rather than blocking, so adding
-  replicas adds throughput instead of contention.
+Payloads do not change, because the in memory store already normalises them the
+same way. That is the point of doing so.
 
 ### What a tick does
 
@@ -428,15 +466,15 @@ dotnet run --project examples/dotnet/SchedulerExample
 ## Tests
 
 ```bash
-npm test                                              # TypeScript, 171 tests
+npm test                                              # TypeScript, 183 tests
 
 cd aspnet/Tide.Asgard.AspNetCore
-dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 171 tests
+dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 183 tests
 ```
 
 The Postgres tests need a real database, because the two properties that matter,
 `SKIP LOCKED` and single statement atomicity, cannot be faked. Point them at a
-throwaway database and both suites grow to 199:
+throwaway database and both suites grow to 211:
 
 ```bash
 export SCHEDULER_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/scheduler_test
@@ -493,7 +531,7 @@ src/scheduler/                                  TypeScript
   execution/
     Clock.ts  RetryPolicy.ts  JobRun.ts  JobStore.ts
     InMemoryJobStore.ts  PostgresJobStore.ts
-    HandlerRegistry.ts  Worker.ts
+    JobDefinition.ts  HandlerRegistry.ts  Worker.ts  Scheduler.ts
 
 aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
   Expression/
@@ -502,7 +540,7 @@ aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
     TimeZoneShim.cs                             only platform specific file
   Execution/
     Clock.cs  RetryPolicy.cs  JobRun.cs  IJobStore.cs
-    InMemoryJobStore.cs  HandlerRegistry.cs  Worker.cs
+    InMemoryJobStore.cs  JobDefinition.cs  HandlerRegistry.cs  Worker.cs
 
 aspnet/.../Tide.Asgard.Scheduler.Postgres/      .NET, needs Npgsql
   PostgresJobStore.cs
