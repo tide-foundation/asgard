@@ -161,6 +161,62 @@ a payload written by an older deploy meeting a handler that has since changed
 shape. A payload that fails to convert is dead lettered immediately rather than
 retried, because no number of attempts will change what is already stored.
 
+### Admin
+
+Schedules live in a store, so they can be inspected and steered at runtime rather
+than only in code.
+
+```ts
+await worker.listSchedules();          // name, expr, enabled, next fire, last fire
+await worker.pauseSchedule("nightly"); // stops materializing, keeps the definition
+await worker.resumeSchedule("nightly");
+await worker.triggerSchedule("nightly");  // run it now, timetable untouched
+await worker.removeSchedule("nightly");
+
+await worker.cancelRun(runId);         // pending or leased, becomes cancelled
+await worker.requeueRun(runId);        // dead or cancelled, back to pending
+```
+
+.NET has the same surface with `Async` names: `ListSchedulesAsync`,
+`PauseScheduleAsync`, `TriggerScheduleAsync`, `CancelRunAsync`, `RequeueRunAsync`.
+
+Three behaviours are worth knowing:
+
+- **Triggering does not move the timetable.** A manual run uses a different
+  idempotency key from a materialized occurrence, so the next scheduled fire is
+  unaffected, and a paused schedule can still be triggered deliberately.
+- **Re-registering preserves a pause.** `addSchedule` at startup updates the
+  definition but leaves `enabled` alone, so a redeploy cannot silently resume
+  something an operator stopped. It also keeps the schedule's place in time
+  unless the expression itself changed.
+- **Cancelling is recorded, not erased.** A cancelled run keeps its row, so the
+  decision stays visible. `requeue` gives a dead or cancelled run a fresh set of
+  attempts.
+
+Both return `false` rather than throwing when there is nothing to act on, which
+is the honest answer to pausing a schedule that does not exist or cancelling a
+run that already finished.
+
+### Making schedules durable
+
+By default schedules live in memory, which is right when they are declared in
+code and re-registered at startup. Runs they materialize are already durable, and
+the idempotency key stops two replicas duplicating an occurrence, so this is not
+a correctness gap.
+
+Give the worker a `PostgresScheduleStore` and a pause survives a restart, and a
+schedule can be added without a deploy:
+
+```ts
+const worker = await createScheduler({
+    store: new PostgresJobStore(pool),
+    scheduleStore: new PostgresScheduleStore(pool),
+    jobs: [reconcileOrks]
+});
+```
+
+Both tables come from the same schema file, so one `ensureSchema` covers them.
+
 ### Making it durable
 
 Swap the store. Nothing else changes: the same worker, handlers and schedules now
@@ -466,15 +522,15 @@ dotnet run --project examples/dotnet/SchedulerExample
 ## Tests
 
 ```bash
-npm test                                              # TypeScript, 183 tests
+npm test                                              # TypeScript, 200 tests
 
 cd aspnet/Tide.Asgard.AspNetCore
-dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 183 tests
+dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 200 tests
 ```
 
 The Postgres tests need a real database, because the two properties that matter,
 `SKIP LOCKED` and single statement atomicity, cannot be faked. Point them at a
-throwaway database and both suites grow to 211:
+throwaway database and both suites grow to 241:
 
 ```bash
 export SCHEDULER_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/scheduler_test
@@ -531,7 +587,8 @@ src/scheduler/                                  TypeScript
   execution/
     Clock.ts  RetryPolicy.ts  JobRun.ts  JobStore.ts
     InMemoryJobStore.ts  PostgresJobStore.ts
-    JobDefinition.ts  HandlerRegistry.ts  Worker.ts  Scheduler.ts
+    ScheduleStore.ts  InMemoryScheduleStore.ts  PostgresScheduleStore.ts
+    MisfirePolicy.ts  JobDefinition.ts  HandlerRegistry.ts  Worker.ts  Scheduler.ts
 
 aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
   Expression/
@@ -540,10 +597,11 @@ aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
     TimeZoneShim.cs                             only platform specific file
   Execution/
     Clock.cs  RetryPolicy.cs  JobRun.cs  IJobStore.cs
-    InMemoryJobStore.cs  JobDefinition.cs  HandlerRegistry.cs  Worker.cs
+    InMemoryJobStore.cs  IScheduleStore.cs  InMemoryScheduleStore.cs
+    JobDefinition.cs  HandlerRegistry.cs  Worker.cs
 
 aspnet/.../Tide.Asgard.Scheduler.Postgres/      .NET, needs Npgsql
-  PostgresJobStore.cs
+  PostgresJobStore.cs  PostgresScheduleStore.cs
 
 sql/scheduler-schema.sql                        canonical DDL
 ```
@@ -557,16 +615,13 @@ TypeScript needs no split, because the store there accepts any object with a
 
 ## Not built yet
 
-Jobs are durable, leases renew themselves, mixed fleets route correctly and old
-rows get cleaned up. What is left:
-
-1. **Durable schedules.** Schedules live in the worker's memory and are
-   registered in code at startup. Runs they materialize are durable, and the
-   idempotency key stops two replicas materializing the same occurrence twice, so
-   this is not a correctness gap. But a schedules table holding the spec,
-   `next_fire_at` and an enabled flag is what would let a schedule be paused,
-   resumed or added without a deploy. It is the prerequisite for the next item.
-2. **Admin surface.** Trigger now, pause, cancel, requeue dead.
-3. **Notify instead of poll.** Polling every second is fine to thousands of jobs
+1. **Schema migrations.** `ensureSchema` creates tables idempotently and carries
+   one guarded fix-up for a constraint that widened. That works, but it is not a
+   migration system. A versioned migration table is the eventual answer, and is
+   the main thing standing between this and a 1.0.
+2. **Notify instead of poll.** Polling every second is fine to thousands of jobs
    a second. `LISTEN`/`NOTIFY` on insert would cut latency without raising the
    poll rate, but it is an optimisation rather than a gap.
+3. **An HTTP surface for the admin methods.** They exist on the worker; exposing
+   them is deliberately left to the host, since routing and authorisation belong
+   to the application rather than the SDK.

@@ -176,6 +176,40 @@ export class InMemoryJobStore implements JobStore {
         return victims.length;
     }
 
+    async cancel(runId: string, nowMs: number): Promise<boolean> {
+        const run = this.runs.get(runId);
+        if (run === undefined) return false;
+        if (run.status !== JobStatus.Pending && run.status !== JobStatus.Leased) return false;
+
+        this.runs.set(runId, {
+            ...run,
+            status: JobStatus.Cancelled,
+            leaseOwner: null,
+            leaseExpiresAtMs: null,
+            lastError: "cancelled",
+            updatedAtMs: nowMs
+        });
+        return true;
+    }
+
+    async requeue(runId: string, runAtMs: number, nowMs: number): Promise<boolean> {
+        const run = this.runs.get(runId);
+        if (run === undefined) return false;
+        if (run.status !== JobStatus.Dead && run.status !== JobStatus.Cancelled) return false;
+
+        this.runs.set(runId, {
+            ...run,
+            status: JobStatus.Pending,
+            runAtMs,
+            attempt: 0,
+            lastError: null,
+            leaseOwner: null,
+            leaseExpiresAtMs: null,
+            updatedAtMs: nowMs
+        });
+        return true;
+    }
+
     async stats(nowMs: number): Promise<JobStoreStats> {
         let oldestPendingAgeMs = 0;
 
@@ -189,6 +223,7 @@ export class InMemoryJobStore implements JobStore {
             leased: this.countByStatus(JobStatus.Leased),
             succeeded: this.countByStatus(JobStatus.Succeeded),
             dead: this.countByStatus(JobStatus.Dead),
+            cancelled: this.countByStatus(JobStatus.Cancelled),
             oldestPendingAgeMs
         };
     }

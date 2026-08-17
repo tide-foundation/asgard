@@ -9,17 +9,11 @@ import { HandlerRegistry, JobContext } from "./HandlerRegistry";
 import { JobDefinition, PayloadError } from "./JobDefinition";
 import { JobRun, JobRunRequest } from "./JobRun";
 import { JobStore, JobStoreStats } from "./JobStore";
+import { MisfirePolicy } from "./MisfirePolicy";
+export { MisfirePolicy };
+import { InMemoryScheduleStore } from "./InMemoryScheduleStore";
+import { ScheduleRecord, ScheduleStore } from "./ScheduleStore";
 import { DEFAULT_RETRY_POLICY, PermanentJobError, RetryPolicy, retryDelayMs } from "./RetryPolicy";
-
-export enum MisfirePolicy {
-    // Catch up with a single run, whatever was missed. The right default: after
-    // an outage you usually want the job to happen, once, not sixty times.
-    FireOnce = "fire_once",
-    // Enqueue every missed occurrence.
-    FireAll = "fire_all",
-    // Abandon what was missed and wait for the next occurrence.
-    Skip = "skip"
-}
 
 export interface ScheduleDefinition<TPayload = void> {
     // Unique. Also forms the idempotency key of every run it materializes, so
@@ -59,8 +53,14 @@ export interface WorkerOptions {
     // or bring your own registry, or both.
     readonly jobs?: readonly JobDefinition<any>[];
     readonly registry?: HandlerRegistry;
-    // Recurring schedules to register up front.
+    // Recurring schedules to register up front. Registering touches the
+    // schedule store, so these are applied by createScheduler rather than the
+    // constructor.
     readonly schedules?: readonly ScheduleDefinition<any>[];
+    // Where schedules live. Defaults to memory, which is right when schedules
+    // are declared in code. Give it a PostgresScheduleStore to have a pause
+    // survive a restart, or to add a schedule without a deploy.
+    readonly scheduleStore?: ScheduleStore;
     readonly clock?: Clock;
     // Identifies this worker in lease records. Defaults to a random label.
     readonly owner?: string;
@@ -90,18 +90,20 @@ export interface TickResult {
     readonly purged: number;
 }
 
-interface TrackedSchedule {
-    readonly def: ScheduleDefinition<any>;
-    readonly spec: ScheduleSpec;
-    // Null means the next occurrence is chained on settle rather than
-    // materialized on a tick.
-    nextFireAtMs: number | null;
-    readonly chainOnSettle: boolean;
-}
-
 // Guards against enumerating an unbounded number of missed occurrences when a
 // fast schedule has been down for a long time.
 const MAX_CATCH_UP = 10_000;
+
+// A tick materializes at most this many schedules, so one pass stays bounded no
+// matter how many are registered.
+const MAX_SCHEDULES_PER_TICK = 1_000;
+
+// Fixed delay measures from the end of the previous run, so its next occurrence
+// is only knowable once the current one settles. Every other kind sits on a
+// timeline the materializer can walk ahead of time.
+function chainsOnSettle(spec: ScheduleSpec): boolean {
+    return spec.kind === "interval" && spec.mode === IntervalMode.FixedDelay;
+}
 
 export class Worker {
     private readonly store: JobStore;
@@ -118,7 +120,7 @@ export class Worker {
     private readonly random: () => number;
     private readonly onError: (error: unknown, run: JobRun | null) => void;
 
-    private readonly schedules = new Map<string, TrackedSchedule>();
+    private readonly scheduleStore: ScheduleStore;
     private readonly inFlight = new Set<string>();
     private readonly stopController = new AbortController();
     private loop: Promise<void> | null = null;
@@ -128,6 +130,7 @@ export class Worker {
     constructor(options: WorkerOptions) {
         this.store = options.store;
         this.registry = options.registry ?? new HandlerRegistry();
+        this.scheduleStore = options.scheduleStore ?? new InMemoryScheduleStore();
         if (options.jobs !== undefined) this.registry.registerAll(options.jobs);
         this.clock = options.clock ?? systemClock;
         this.owner = options.owner ?? `worker-${Math.random().toString(36).slice(2, 10)}`;
@@ -140,30 +143,78 @@ export class Worker {
         this.retry = options.retry ?? DEFAULT_RETRY_POLICY;
         this.random = options.random ?? Math.random;
         this.onError = options.onError ?? (() => { });
-
-        for (const schedule of options.schedules ?? []) this.addSchedule(schedule);
     }
 
-    // Registers a recurring schedule. Safe to call before or after start.
-    addSchedule<TPayload>(def: ScheduleDefinition<TPayload>): void {
-        if (this.schedules.has(def.name)) {
-            throw new Error(`schedule '${def.name}' is already registered`);
-        }
+    // Registers a recurring schedule, or updates one that already exists.
+    // Re-registering keeps whether it is enabled, so a redeploy cannot silently
+    // resume something an operator paused, and keeps its place in time unless
+    // the expression itself changed.
+    async addSchedule<TPayload>(def: ScheduleDefinition<TPayload>): Promise<ScheduleRecord> {
         if (!this.registry.has(def.job.name)) this.registry.register(def.job);
 
         const spec = parseSchedule(def.expr);
+        const now = this.clock.nowMs();
 
-        // Fixed delay measures from the end of the previous run, so its next
-        // occurrence is only knowable once the current one settles. Every other
-        // kind sits on a timeline the materializer can walk ahead of time.
-        const chainOnSettle = spec.kind === "interval" && spec.mode === IntervalMode.FixedDelay;
-
-        this.schedules.set(def.name, {
-            def,
+        return this.scheduleStore.upsert({
+            name: def.name,
+            handler: def.job.name,
+            payload: def.payload,
+            expr: def.expr,
             spec,
-            nextFireAtMs: nextFire(spec, this.clock.nowMs()),
-            chainOnSettle
+            misfire: def.misfire ?? MisfirePolicy.FireOnce,
+            maxAttempts: def.maxAttempts ?? def.job.maxAttempts ?? null,
+            nextFireAtMs: nextFire(spec, now)
+        }, now);
+    }
+
+    // Admin surface.
+
+    listSchedules(): Promise<ScheduleRecord[]> {
+        return this.scheduleStore.list();
+    }
+
+    getSchedule(name: string): Promise<ScheduleRecord | null> {
+        return this.scheduleStore.get(name);
+    }
+
+    pauseSchedule(name: string): Promise<boolean> {
+        return this.scheduleStore.setEnabled(name, false, this.clock.nowMs());
+    }
+
+    resumeSchedule(name: string): Promise<boolean> {
+        return this.scheduleStore.setEnabled(name, true, this.clock.nowMs());
+    }
+
+    removeSchedule(name: string): Promise<boolean> {
+        return this.scheduleStore.remove(name);
+    }
+
+    // Runs a schedule now without disturbing its timetable. The key is distinct
+    // from a materialized occurrence, so triggering twice in the same
+    // millisecond is the only way to collide, and a paused schedule can still be
+    // triggered on purpose.
+    async triggerSchedule(name: string): Promise<JobRun | null> {
+        const record = await this.scheduleStore.get(name);
+        if (record === null) return null;
+
+        const now = this.clock.nowMs();
+        return this.store.enqueue({
+            handler: record.handler,
+            payload: record.payload,
+            runAtMs: now,
+            scheduleId: record.name,
+            idempotencyKey: `${record.name}:manual:${now}`,
+            maxAttempts: record.maxAttempts ?? this.retry.maxAttempts
         });
+    }
+
+    cancelRun(runId: string): Promise<boolean> {
+        return this.store.cancel(runId, this.clock.nowMs());
+    }
+
+    requeueRun(runId: string, runAtMs?: number): Promise<boolean> {
+        const now = this.clock.nowMs();
+        return this.store.requeue(runId, runAtMs ?? now, now);
     }
 
     // Queues a one off job. Pass the definition, not its name, so the payload is
@@ -302,49 +353,55 @@ export class Worker {
     private async materialize(nowMs: number): Promise<number> {
         let materialized = 0;
 
-        for (const tracked of this.schedules.values()) {
-            if (tracked.nextFireAtMs === null) continue;
+        for (const record of await this.scheduleStore.listDue(nowMs, MAX_SCHEDULES_PER_TICK)) {
+            if (record.nextFireAtMs === null) continue;
 
             // Walk the occurrences that have come due since the last pass.
             const due: number[] = [];
-            let cursor: number | null = tracked.nextFireAtMs;
+            let cursor: number | null = record.nextFireAtMs;
 
             while (cursor !== null && cursor <= nowMs && due.length < MAX_CATCH_UP) {
                 due.push(cursor);
-                cursor = nextFire(tracked.spec, cursor);
+                cursor = nextFire(record.spec, cursor);
             }
 
             if (due.length === 0) continue;
 
-            const misfire = tracked.def.misfire ?? MisfirePolicy.FireOnce;
             const toEnqueue =
-                misfire === MisfirePolicy.FireAll ? due :
-                    misfire === MisfirePolicy.Skip ? [] :
+                record.misfire === MisfirePolicy.FireAll ? due :
+                    record.misfire === MisfirePolicy.Skip ? [] :
                         [due[due.length - 1]];
 
             for (const fireAt of toEnqueue) {
-                const run = await this.store.enqueue(this.requestFor(tracked, fireAt));
+                // Enqueue before advancing. The key makes the insert idempotent,
+                // so a crash in between costs a repeated attempt rather than a
+                // lost occurrence.
+                const run = await this.store.enqueue(this.requestFor(record, fireAt));
                 if (run !== null) materialized += 1;
             }
 
             // A chained schedule re-arms when its run settles, not here.
-            tracked.nextFireAtMs = tracked.chainOnSettle ? null : cursor;
+            await this.scheduleStore.advance(
+                record.name,
+                chainsOnSettle(record.spec) ? null : cursor,
+                due[due.length - 1],
+                nowMs);
         }
 
         return materialized;
     }
 
-    private requestFor(tracked: TrackedSchedule, fireAtMs: number): JobRunRequest {
+    private requestFor(record: ScheduleRecord, fireAtMs: number): JobRunRequest {
         return {
-            handler: tracked.def.job.name,
-            payload: tracked.def.payload,
+            handler: record.handler,
+            payload: record.payload,
             // Jitter moves when the run happens but not its identity. Keying on
             // the jittered time would let two workers compute different keys for
             // the same occurrence and enqueue it twice.
-            runAtMs: fireAtMs + this.jitterFor(tracked.spec),
-            scheduleId: tracked.def.name,
-            idempotencyKey: `${tracked.def.name}:${fireAtMs}`,
-            maxAttempts: tracked.def.maxAttempts ?? tracked.def.job.maxAttempts ?? this.retry.maxAttempts
+            runAtMs: fireAtMs + this.jitterFor(record.spec),
+            scheduleId: record.name,
+            idempotencyKey: `${record.name}:${fireAtMs}`,
+            maxAttempts: record.maxAttempts ?? this.retry.maxAttempts
         };
     }
 
@@ -355,16 +412,16 @@ export class Worker {
 
     // The successor to enqueue in the same call that settles this run. Null for
     // one off work and for schedules the materializer already walks forward.
-    private chainFor(run: JobRun, nowMs: number): JobRunRequest | null {
+    private async chainFor(run: JobRun, nowMs: number): Promise<JobRunRequest | null> {
         if (run.scheduleId === null) return null;
 
-        const tracked = this.schedules.get(run.scheduleId);
-        if (tracked === undefined || !tracked.chainOnSettle) return null;
+        const record = await this.scheduleStore.get(run.scheduleId);
+        if (record === null || !record.enabled || !chainsOnSettle(record.spec)) return null;
 
-        const fireAt = nextFire(tracked.spec, nowMs);
+        const fireAt = nextFire(record.spec, nowMs);
         if (fireAt === null) return null;
 
-        return this.requestFor(tracked, fireAt);
+        return this.requestFor(record, fireAt);
     }
 
     private async dispatch(run: JobRun): Promise<"succeeded" | "retried" | "dead"> {
@@ -375,7 +432,7 @@ export class Worker {
             // deployment should instead claim only handlers it knows about.
             const at = this.clock.nowMs();
             const error = `no handler registered for '${run.handler}'`;
-            await this.store.deadLetter(run.id, error, this.chainFor(run, at), at);
+            await this.store.deadLetter(run.id, error, await this.chainFor(run, at), at);
             this.onError(new Error(error), run);
             return "dead";
         }
@@ -409,7 +466,7 @@ export class Worker {
         }
 
         const at = this.clock.nowMs();
-        await this.store.complete(run.id, this.chainFor(run, at), at);
+        await this.store.complete(run.id, await this.chainFor(run, at), at);
         return "succeeded";
     }
 
@@ -426,7 +483,7 @@ export class Worker {
             return "retried";
         }
 
-        await this.store.deadLetter(run.id, message, this.chainFor(run, at), at);
+        await this.store.deadLetter(run.id, message, await this.chainFor(run, at), at);
         return "dead";
     }
 }

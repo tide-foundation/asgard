@@ -13,7 +13,10 @@ public enum JobStatus
 	Succeeded,
 	// Terminal failure: attempts exhausted, or the handler raised
 	// PermanentJobException.
-	Dead
+	Dead,
+	// Stopped by an operator before it ran. Kept rather than deleted so the
+	// record of the decision survives.
+	Cancelled
 }
 
 public sealed record JobRun

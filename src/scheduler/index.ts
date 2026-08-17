@@ -24,12 +24,15 @@ export {
 } from "./execution/RetryPolicy";
 export { JobRun, JobRunRequest, JobStatus } from "./execution/JobRun";
 export { JobStore, JobStoreStats } from "./execution/JobStore";
+export { MisfirePolicy } from "./execution/MisfirePolicy";
+export { ScheduleStore, ScheduleRecord, ScheduleUpsert } from "./execution/ScheduleStore";
+export { InMemoryScheduleStore } from "./execution/InMemoryScheduleStore";
+export { PostgresScheduleStore } from "./execution/PostgresScheduleStore";
 export { InMemoryJobStore } from "./execution/InMemoryJobStore";
 export { PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL } from "./execution/PostgresJobStore";
 export { HandlerRegistry, JobContext } from "./execution/HandlerRegistry";
 export { JobDefinition, defineJob, PayloadError } from "./execution/JobDefinition";
 export { createScheduler } from "./execution/Scheduler";
 export {
-    Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy, RetentionPolicy,
-    EnqueueOptions
+    Worker, WorkerOptions, TickResult, ScheduleDefinition, RetentionPolicy, EnqueueOptions
 } from "./execution/Worker";

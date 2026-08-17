@@ -199,6 +199,47 @@ public sealed class InMemoryJobStore : IJobStore
 		}
 	}
 
+	public Task<bool> CancelAsync(string runId, long nowMs, CancellationToken ct = default)
+	{
+		lock (_gate)
+		{
+			if (!_runs.TryGetValue(runId, out var run)) return Task.FromResult(false);
+			if (run.Status is not (JobStatus.Pending or JobStatus.Leased)) return Task.FromResult(false);
+
+			_runs[runId] = run with
+			{
+				Status = JobStatus.Cancelled,
+				LeaseOwner = null,
+				LeaseExpiresAtMs = null,
+				LastError = "cancelled",
+				UpdatedAtMs = nowMs
+			};
+			return Task.FromResult(true);
+		}
+	}
+
+	public Task<bool> RequeueAsync(
+		string runId, long runAtMs, long nowMs, CancellationToken ct = default)
+	{
+		lock (_gate)
+		{
+			if (!_runs.TryGetValue(runId, out var run)) return Task.FromResult(false);
+			if (run.Status is not (JobStatus.Dead or JobStatus.Cancelled)) return Task.FromResult(false);
+
+			_runs[runId] = run with
+			{
+				Status = JobStatus.Pending,
+				RunAtMs = runAtMs,
+				Attempt = 0,
+				LastError = null,
+				LeaseOwner = null,
+				LeaseExpiresAtMs = null,
+				UpdatedAtMs = nowMs
+			};
+			return Task.FromResult(true);
+		}
+	}
+
 	public Task<JobStoreStats> StatsAsync(long nowMs, CancellationToken ct = default)
 	{
 		lock (_gate)
@@ -215,6 +256,7 @@ public sealed class InMemoryJobStore : IJobStore
 				_runs.Values.Count(r => r.Status == JobStatus.Leased),
 				_runs.Values.Count(r => r.Status == JobStatus.Succeeded),
 				_runs.Values.Count(r => r.Status == JobStatus.Dead),
+				_runs.Values.Count(r => r.Status == JobStatus.Cancelled),
 				oldest));
 		}
 	}

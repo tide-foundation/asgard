@@ -10,7 +10,7 @@ const path = require("node:path");
 const {
     FakeClock, InMemoryJobStore, HandlerRegistry, Worker, MisfirePolicy,
     JobStatus, JitterMode, retryDelayMs, shouldRetry, PermanentJobError,
-    defineJob, createScheduler
+    defineJob, createScheduler, InMemoryScheduleStore
 } = require(path.join(__dirname, "..", "..", "dist", "cjs", "scheduler", "index.js"));
 
 const T0 = Date.parse("2026-08-17T00:00:00Z");
@@ -218,7 +218,7 @@ describe("job definitions", () => {
 
     test("scheduling a definition registers it", async () => {
         const { registry, worker } = harness();
-        worker.addSchedule({ name: "s", expr: "on 03:00", job: job("sweep", () => { }) });
+        await worker.addSchedule({ name: "s", expr: "on 03:00", job: job("sweep", () => { }) });
 
         assert.equal(registry.has("sweep"), true);
     });
@@ -250,7 +250,7 @@ describe("job definitions", () => {
         const fired = [];
         const sweep = job("sweep", () => { fired.push(clock.nowMs()); });
 
-        const worker = new Worker({
+        const worker = await createScheduler({
             store, clock, retry: NO_JITTER,
             jobs: [sweep],
             schedules: [{ name: "half-minute", expr: "on second=*/30", job: sweep }]
@@ -416,7 +416,7 @@ describe("worker: recurring schedules", () => {
         const fired = [];
         const sweep = job("sweep", () => { fired.push(clock.nowMs()); });
 
-        worker.addSchedule({ name: "sweep-every-30s", expr: "on second=*/30", job: sweep });
+        await worker.addSchedule({ name: "sweep-every-30s", expr: "on second=*/30", job: sweep });
 
         assert.equal((await worker.tick()).materialized, 0, "nothing is due yet");
 
@@ -438,7 +438,7 @@ describe("worker: recurring schedules", () => {
         let runs = 0;
         const sync = job("sync", () => { runs += 1; });
 
-        worker.addSchedule({ name: "sync-loop", expr: "every 10s", job: sync });
+        await worker.addSchedule({ name: "sync-loop", expr: "every 10s", job: sync });
 
         clock.advance(10_000);
         assert.equal((await worker.tick()).succeeded, 1);
@@ -453,7 +453,7 @@ describe("worker: recurring schedules", () => {
         const { clock, store, worker } = harness();
         const brittle = job("brittle", () => { throw new PermanentJobError("nope"); });
 
-        worker.addSchedule({
+        await worker.addSchedule({
             name: "brittle-loop", expr: "every 10s", job: brittle, maxAttempts: 1
         });
 
@@ -466,7 +466,7 @@ describe("worker: recurring schedules", () => {
         async function missed(misfire) {
             const { clock, worker } = harness();
             const catchUp = job("catch-up", () => { });
-            worker.addSchedule({ name: "every-10s", expr: "on second=*/10", job: catchUp, misfire });
+            await worker.addSchedule({ name: "every-10s", expr: "on second=*/10", job: catchUp, misfire });
 
             clock.advance(35_000);
             return (await worker.tick()).materialized;
@@ -487,8 +487,8 @@ describe("worker: recurring schedules", () => {
         const b = new Worker({ ...options, owner: "b" });
 
         const definition = { name: "shared-sweep", expr: "on second=*/30", job: shared };
-        a.addSchedule(definition);
-        b.addSchedule(definition);
+        await a.addSchedule(definition);
+        await b.addSchedule(definition);
 
         clock.advance(30_000);
         const first = await a.tick();
@@ -497,6 +497,215 @@ describe("worker: recurring schedules", () => {
         assert.equal(first.materialized, 1);
         assert.equal(second.materialized, 0, "the idempotency key discarded the duplicate");
         assert.equal(store.all().length, 1);
+    });
+});
+
+describe("durable schedules", () => {
+    test("re-registering keeps a schedule paused", async () => {
+        const scheduleStore = new InMemoryScheduleStore();
+        const definition = { name: "nightly", expr: "on 03:00", job: job("sweep", () => { }) };
+
+        const first = harness({ scheduleStore });
+        await first.worker.addSchedule(definition);
+        assert.equal(await first.worker.pauseSchedule("nightly"), true);
+
+        // Standing in for a redeploy: a fresh worker over the same store.
+        const second = harness({ scheduleStore });
+        await second.worker.addSchedule(definition);
+
+        const record = await second.worker.getSchedule("nightly");
+        assert.equal(record.enabled, false, "a redeploy must not silently resume it");
+    });
+
+    test("re-registering keeps its place in time", async () => {
+        const { clock, worker } = harness();
+        const definition = { name: "nightly", expr: "on 03:00", job: job("sweep", () => { }) };
+
+        await worker.addSchedule(definition);
+        const before = (await worker.getSchedule("nightly")).nextFireAtMs;
+
+        clock.advance(60_000);
+        await worker.addSchedule(definition);
+
+        assert.equal((await worker.getSchedule("nightly")).nextFireAtMs, before);
+    });
+
+    test("changing the expression moves the next fire time", async () => {
+        const { worker } = harness();
+        const sweep = job("sweep", () => { });
+
+        await worker.addSchedule({ name: "nightly", expr: "on 03:00", job: sweep });
+        const before = (await worker.getSchedule("nightly")).nextFireAtMs;
+
+        await worker.addSchedule({ name: "nightly", expr: "on 04:00", job: sweep });
+        const after = (await worker.getSchedule("nightly")).nextFireAtMs;
+
+        assert.equal(after - before, 3_600_000);
+    });
+
+    test("a paused schedule stops materializing and resumes on demand", async () => {
+        const { clock, worker } = harness();
+        await worker.addSchedule({
+            name: "half-minute", expr: "on second=*/30", job: job("sweep", () => { })
+        });
+
+        clock.advance(30_000);
+        assert.equal((await worker.tick()).materialized, 1);
+
+        assert.equal(await worker.pauseSchedule("half-minute"), true);
+        clock.advance(30_000);
+        assert.equal((await worker.tick()).materialized, 0, "paused means paused");
+
+        assert.equal(await worker.resumeSchedule("half-minute"), true);
+        clock.advance(30_000);
+        assert.equal((await worker.tick()).materialized, 1);
+    });
+
+    test("pausing something that does not exist says so", async () => {
+        const { worker } = harness();
+        assert.equal(await worker.pauseSchedule("nope"), false);
+    });
+
+    test("removing a schedule stops it firing", async () => {
+        const { clock, worker } = harness();
+        await worker.addSchedule({
+            name: "half-minute", expr: "on second=*/30", job: job("sweep", () => { })
+        });
+
+        assert.equal(await worker.removeSchedule("half-minute"), true);
+        clock.advance(60_000);
+        assert.equal((await worker.tick()).materialized, 0);
+        assert.deepEqual(await worker.listSchedules(), []);
+    });
+
+    test("listing reports what is registered", async () => {
+        const { worker } = harness();
+        await worker.addSchedule({ name: "b", expr: "on 04:00", job: job("j2", () => { }) });
+        await worker.addSchedule({ name: "a", expr: "on 03:00", job: job("j1", () => { }) });
+
+        const listed = await worker.listSchedules();
+        assert.deepEqual(listed.map(s => s.name), ["a", "b"]);
+        assert.deepEqual(listed.map(s => s.expr), ["on 03:00", "on 04:00"]);
+        assert.equal(listed.every(s => s.enabled), true);
+    });
+
+    test("a schedule advances its own next fire time", async () => {
+        const { clock, worker } = harness();
+        await worker.addSchedule({
+            name: "half-minute", expr: "on second=*/30", job: job("sweep", () => { })
+        });
+
+        clock.advance(30_000);
+        await worker.tick();
+
+        const record = await worker.getSchedule("half-minute");
+        assert.equal(record.lastFireAtMs, T0 + 30_000);
+        assert.equal(record.nextFireAtMs, T0 + 60_000);
+    });
+});
+
+describe("admin: triggering, cancelling and requeueing", () => {
+    test("trigger runs a schedule now without disturbing its timetable", async () => {
+        const { clock, worker } = harness();
+        const fired = [];
+        await worker.addSchedule({
+            name: "nightly", expr: "on 03:00", job: job("sweep", () => { fired.push(clock.nowMs()); })
+        });
+
+        const before = (await worker.getSchedule("nightly")).nextFireAtMs;
+
+        assert.notEqual(await worker.triggerSchedule("nightly"), null);
+        assert.equal((await worker.tick()).succeeded, 1);
+
+        assert.deepEqual(fired, [T0]);
+        assert.equal((await worker.getSchedule("nightly")).nextFireAtMs, before,
+            "a manual run must not move the schedule");
+    });
+
+    test("a paused schedule can still be triggered on purpose", async () => {
+        const { worker } = harness();
+        await worker.addSchedule({
+            name: "nightly", expr: "on 03:00", job: job("sweep", () => { })
+        });
+        await worker.pauseSchedule("nightly");
+
+        assert.notEqual(await worker.triggerSchedule("nightly"), null);
+        assert.equal((await worker.tick()).succeeded, 1);
+    });
+
+    test("triggering something that does not exist says so", async () => {
+        const { worker } = harness();
+        assert.equal(await worker.triggerSchedule("nope"), null);
+    });
+
+    test("cancel stops a pending run", async () => {
+        const { store, worker } = harness();
+        let runs = 0;
+        const run = await worker.enqueue(job("later", () => { runs += 1; }), undefined, {
+            runAtMs: T0 + 60_000
+        });
+
+        assert.equal(await worker.cancelRun(run.id), true);
+        assert.equal(store.countByStatus(JobStatus.Cancelled), 1);
+
+        await worker.tick();
+        assert.equal(runs, 0);
+    });
+
+    test("cancelling a settled run says so rather than pretending", async () => {
+        const { worker } = harness();
+        const run = await worker.enqueue(job("quick", () => { }));
+        await worker.tick();
+
+        assert.equal(await worker.cancelRun(run.id), false);
+    });
+
+    test("requeue puts a dead run back with a fresh set of attempts", async () => {
+        const { clock, store, worker } = harness();
+        let attempts = 0;
+        const flaky = job("flaky", () => {
+            attempts += 1;
+            if (attempts === 1) throw new PermanentJobError("nope");
+        });
+
+        const run = await worker.enqueue(flaky, undefined, { maxAttempts: 1 });
+        assert.equal((await worker.tick()).dead, 1);
+
+        clock.advance(1_000);
+        assert.equal(await worker.requeueRun(run.id), true);
+
+        const requeued = await store.get(run.id);
+        assert.equal(requeued.status, JobStatus.Pending);
+        assert.equal(requeued.attempt, 0, "attempts start over");
+        assert.equal(requeued.lastError, null);
+
+        assert.equal((await worker.tick()).succeeded, 1);
+    });
+
+    test("requeue can also revive a cancelled run", async () => {
+        const { worker, store } = harness();
+        const run = await worker.enqueue(job("later", () => { }), undefined, { runAtMs: T0 + 60_000 });
+
+        await worker.cancelRun(run.id);
+        assert.equal(await worker.requeueRun(run.id), true);
+        assert.equal((await store.get(run.id)).status, JobStatus.Pending);
+    });
+
+    test("requeueing a run that is not settled says so", async () => {
+        const { worker } = harness();
+        const run = await worker.enqueue(job("later", () => { }), undefined, { runAtMs: T0 + 60_000 });
+
+        assert.equal(await worker.requeueRun(run.id), false);
+    });
+
+    test("cancelled runs are counted separately", async () => {
+        const { worker } = harness();
+        const run = await worker.enqueue(job("later", () => { }), undefined, { runAtMs: T0 + 60_000 });
+        await worker.cancelRun(run.id);
+
+        const stats = await worker.stats();
+        assert.equal(stats.cancelled, 1);
+        assert.equal(stats.pending, 0);
     });
 });
 

@@ -8,7 +8,7 @@ namespace Tide.Asgard.Scheduler.Execution;
 // looks exactly like an outage, whereas a rising oldest age only ever means work
 // is not being picked up.
 public sealed record JobStoreStats(
-	int Pending, int Leased, int Succeeded, int Dead, long OldestPendingAgeMs);
+	int Pending, int Leased, int Succeeded, int Dead, int Cancelled, long OldestPendingAgeMs);
 
 // Implemented by stores that own their tables. Kept separate from IJobStore so
 // the contract does not carry something only durable implementations need.
@@ -74,6 +74,15 @@ public interface IJobStore
 	// something never ran.
 	Task<int> PurgeSettledAsync(
 		long beforeMs, int limit, bool includeDead = false, CancellationToken ct = default);
+
+	// Admin. Stops a run that has not finished. Returns false when it is already
+	// settled, which is the honest answer to cancelling something that has
+	// already happened.
+	Task<bool> CancelAsync(string runId, long nowMs, CancellationToken ct = default);
+
+	// Admin. Puts a dead or cancelled run back in the queue with a fresh set of
+	// attempts. Returns false when the run is not in a state that can be requeued.
+	Task<bool> RequeueAsync(string runId, long runAtMs, long nowMs, CancellationToken ct = default);
 
 	Task<JobStoreStats> StatsAsync(long nowMs, CancellationToken ct = default);
 

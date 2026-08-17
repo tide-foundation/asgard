@@ -26,6 +26,10 @@ import {
 } from "./scheduler/execution/RetryPolicy";
 import { JobRun, JobRunRequest, JobStatus } from "./scheduler/execution/JobRun";
 import { JobStore, JobStoreStats } from "./scheduler/execution/JobStore";
+import { MisfirePolicy } from "./scheduler/execution/MisfirePolicy";
+import { ScheduleStore, ScheduleRecord, ScheduleUpsert } from "./scheduler/execution/ScheduleStore";
+import { InMemoryScheduleStore } from "./scheduler/execution/InMemoryScheduleStore";
+import { PostgresScheduleStore } from "./scheduler/execution/PostgresScheduleStore";
 import { InMemoryJobStore } from "./scheduler/execution/InMemoryJobStore";
 import {
     PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL
@@ -34,8 +38,7 @@ import { HandlerRegistry, JobContext } from "./scheduler/execution/HandlerRegist
 import { JobDefinition, defineJob, PayloadError } from "./scheduler/execution/JobDefinition";
 import { createScheduler } from "./scheduler/execution/Scheduler";
 import {
-    Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy, RetentionPolicy,
-    EnqueueOptions
+    Worker, WorkerOptions, TickResult, ScheduleDefinition, RetentionPolicy, EnqueueOptions
 } from "./scheduler/execution/Worker";
 
 export { GenericResourceAccessThresholdRoleContract }
@@ -56,4 +59,6 @@ export { PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL }
 export { HandlerRegistry, JobContext }
 export { JobDefinition, defineJob, PayloadError }
 export { createScheduler }
-export { Worker, WorkerOptions, TickResult, ScheduleDefinition, MisfirePolicy, RetentionPolicy, EnqueueOptions }
+export { Worker, WorkerOptions, TickResult, ScheduleDefinition, RetentionPolicy, EnqueueOptions }
+export { MisfirePolicy, ScheduleStore, ScheduleRecord, ScheduleUpsert }
+export { InMemoryScheduleStore, PostgresScheduleStore }

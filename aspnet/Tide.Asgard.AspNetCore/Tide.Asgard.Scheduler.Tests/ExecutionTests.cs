@@ -57,6 +57,8 @@ internal static class ExecutionTests
 		PayloadHandling(runner);
 		FailureHandling(runner);
 		RecurringSchedules(runner);
+		DurableSchedules(runner);
+		Admin(runner);
 		Retention(runner);
 		Stats(runner);
 		LeaseRenewal(runner);
@@ -77,10 +79,11 @@ internal static class ExecutionTests
 			Assert.Equal(true, h.Registry.Has("greet"), "no separate registration step");
 		});
 
-		runner.Test("scheduling a definition registers it", () =>
+		runner.TestAsync("scheduling a definition registers it", async () =>
 		{
 			var h = NewHarness();
-			h.Worker.AddSchedule(ScheduleDefinition.For("s", "on 03:00", Job.Define("sweep", _ => { })));
+			await h.Worker.AddScheduleAsync(
+				ScheduleDefinition.For("s", "on 03:00", Job.Define("sweep", _ => { })));
 
 			Assert.Equal(true, h.Registry.Has("sweep"));
 		});
@@ -124,7 +127,7 @@ internal static class ExecutionTests
 			var fired = new List<long>();
 			var sweep = Job.Define("sweep", _ => fired.Add(clock.NowMs));
 
-			var worker = new Worker(new WorkerOptions
+			var worker = await Worker.CreateAsync(new WorkerOptions
 			{
 				Store = store,
 				Clock = clock,
@@ -271,11 +274,259 @@ internal static class ExecutionTests
 			long beforeMs, int limit, bool includeDead = false, CancellationToken ct = default)
 			=> _inner.PurgeSettledAsync(beforeMs, limit, includeDead, ct);
 
+		public Task<bool> CancelAsync(string runId, long nowMs, CancellationToken ct = default)
+			=> _inner.CancelAsync(runId, nowMs, ct);
+
+		public Task<bool> RequeueAsync(
+			string runId, long runAtMs, long nowMs, CancellationToken ct = default)
+			=> _inner.RequeueAsync(runId, runAtMs, nowMs, ct);
+
 		public Task<JobStoreStats> StatsAsync(long nowMs, CancellationToken ct = default)
 			=> _inner.StatsAsync(nowMs, ct);
 
 		public Task<JobRun?> GetAsync(string runId, CancellationToken ct = default)
 			=> _inner.GetAsync(runId, ct);
+	}
+
+	private static Harness NewHarness(IScheduleStore scheduleStore)
+	{
+		var clock = new FakeClock(T0);
+		var store = new InMemoryJobStore();
+		var registry = new HandlerRegistry();
+		var worker = new Worker(new WorkerOptions
+		{
+			Store = store, Registry = registry, Clock = clock, Owner = "test",
+			ScheduleStore = scheduleStore, Retry = NoJitter, Random = () => 0.5
+		});
+		return new Harness(clock, store, registry, worker);
+	}
+
+	private static void DurableSchedules(TestRunner runner)
+	{
+		runner.Suite("durable schedules");
+
+		runner.TestAsync("re-registering keeps a schedule paused", async () =>
+		{
+			var scheduleStore = new InMemoryScheduleStore();
+			var definition = ScheduleDefinition.For(
+				"nightly", "on 03:00", Job.Define("sweep", _ => { }));
+
+			var first = NewHarness(scheduleStore);
+			await first.Worker.AddScheduleAsync(definition);
+			Assert.Equal(true, await first.Worker.PauseScheduleAsync("nightly"));
+
+			// Standing in for a redeploy: a fresh worker over the same store.
+			var second = NewHarness(scheduleStore);
+			await second.Worker.AddScheduleAsync(definition);
+
+			var record = await second.Worker.GetScheduleAsync("nightly");
+			Assert.Equal(false, record!.Enabled, "a redeploy must not silently resume it");
+		});
+
+		runner.TestAsync("re-registering keeps its place in time", async () =>
+		{
+			var h = NewHarness();
+			var definition = ScheduleDefinition.For(
+				"nightly", "on 03:00", Job.Define("sweep", _ => { }));
+
+			await h.Worker.AddScheduleAsync(definition);
+			var before = (await h.Worker.GetScheduleAsync("nightly"))!.NextFireAtMs;
+
+			h.Clock.Advance(60_000);
+			await h.Worker.AddScheduleAsync(definition);
+
+			Assert.Equal(before, (await h.Worker.GetScheduleAsync("nightly"))!.NextFireAtMs);
+		});
+
+		runner.TestAsync("changing the expression moves the next fire time", async () =>
+		{
+			var h = NewHarness();
+			var sweep = Job.Define("sweep", _ => { });
+
+			await h.Worker.AddScheduleAsync(ScheduleDefinition.For("nightly", "on 03:00", sweep));
+			var before = (await h.Worker.GetScheduleAsync("nightly"))!.NextFireAtMs!.Value;
+
+			await h.Worker.AddScheduleAsync(ScheduleDefinition.For("nightly", "on 04:00", sweep));
+			var after = (await h.Worker.GetScheduleAsync("nightly"))!.NextFireAtMs!.Value;
+
+			Assert.Equal(3_600_000L, after - before);
+		});
+
+		runner.TestAsync("a paused schedule stops materializing and resumes on demand", async () =>
+		{
+			var h = NewHarness();
+			await h.Worker.AddScheduleAsync(ScheduleDefinition.For(
+				"half-minute", "on second=*/30", Job.Define("sweep", _ => { })));
+
+			h.Clock.Advance(30_000);
+			Assert.Equal(1, (await h.Worker.TickAsync()).Materialized);
+
+			Assert.Equal(true, await h.Worker.PauseScheduleAsync("half-minute"));
+			h.Clock.Advance(30_000);
+			Assert.Equal(0, (await h.Worker.TickAsync()).Materialized, "paused means paused");
+
+			Assert.Equal(true, await h.Worker.ResumeScheduleAsync("half-minute"));
+			h.Clock.Advance(30_000);
+			Assert.Equal(1, (await h.Worker.TickAsync()).Materialized);
+		});
+
+		runner.TestAsync("pausing something that does not exist says so", async () =>
+			Assert.Equal(false, await NewHarness().Worker.PauseScheduleAsync("nope")));
+
+		runner.TestAsync("removing a schedule stops it firing", async () =>
+		{
+			var h = NewHarness();
+			await h.Worker.AddScheduleAsync(ScheduleDefinition.For(
+				"half-minute", "on second=*/30", Job.Define("sweep", _ => { })));
+
+			Assert.Equal(true, await h.Worker.RemoveScheduleAsync("half-minute"));
+			h.Clock.Advance(60_000);
+			Assert.Equal(0, (await h.Worker.TickAsync()).Materialized);
+			Assert.Equal(0, (await h.Worker.ListSchedulesAsync()).Count);
+		});
+
+		runner.TestAsync("listing reports what is registered", async () =>
+		{
+			var h = NewHarness();
+			await h.Worker.AddScheduleAsync(
+				ScheduleDefinition.For("b", "on 04:00", Job.Define("j2", _ => { })));
+			await h.Worker.AddScheduleAsync(
+				ScheduleDefinition.For("a", "on 03:00", Job.Define("j1", _ => { })));
+
+			var listed = await h.Worker.ListSchedulesAsync();
+			Assert.Sequence(["a", "b"], listed.Select(x => x.Name));
+			Assert.Sequence(["on 03:00", "on 04:00"], listed.Select(x => x.Expr));
+			Assert.Equal(true, listed.All(x => x.Enabled));
+		});
+
+		runner.TestAsync("a schedule advances its own next fire time", async () =>
+		{
+			var h = NewHarness();
+			await h.Worker.AddScheduleAsync(ScheduleDefinition.For(
+				"half-minute", "on second=*/30", Job.Define("sweep", _ => { })));
+
+			h.Clock.Advance(30_000);
+			await h.Worker.TickAsync();
+
+			var record = await h.Worker.GetScheduleAsync("half-minute");
+			Assert.Equal(T0 + 30_000, record!.LastFireAtMs);
+			Assert.Equal(T0 + 60_000, record.NextFireAtMs);
+		});
+	}
+
+	private static void Admin(TestRunner runner)
+	{
+		runner.Suite("admin: triggering, cancelling and requeueing");
+
+		runner.TestAsync("trigger runs a schedule now without disturbing its timetable", async () =>
+		{
+			var h = NewHarness();
+			var fired = new List<long>();
+			await h.Worker.AddScheduleAsync(ScheduleDefinition.For(
+				"nightly", "on 03:00", Job.Define("sweep", _ => fired.Add(h.Clock.NowMs))));
+
+			var before = (await h.Worker.GetScheduleAsync("nightly"))!.NextFireAtMs;
+
+			Assert.True(await h.Worker.TriggerScheduleAsync("nightly") is not null, "expected a run");
+			Assert.Equal(1, (await h.Worker.TickAsync()).Succeeded);
+
+			Assert.Sequence([T0], fired);
+			Assert.Equal(before, (await h.Worker.GetScheduleAsync("nightly"))!.NextFireAtMs,
+				"a manual run must not move the schedule");
+		});
+
+		runner.TestAsync("a paused schedule can still be triggered on purpose", async () =>
+		{
+			var h = NewHarness();
+			await h.Worker.AddScheduleAsync(ScheduleDefinition.For(
+				"nightly", "on 03:00", Job.Define("sweep", _ => { })));
+			await h.Worker.PauseScheduleAsync("nightly");
+
+			Assert.True(await h.Worker.TriggerScheduleAsync("nightly") is not null, "expected a run");
+			Assert.Equal(1, (await h.Worker.TickAsync()).Succeeded);
+		});
+
+		runner.TestAsync("triggering something that does not exist says so", async () =>
+			Assert.True(await NewHarness().Worker.TriggerScheduleAsync("nope") is null, "expected null"));
+
+		runner.TestAsync("cancel stops a pending run", async () =>
+		{
+			var h = NewHarness();
+			var runs = 0;
+			var run = await h.Worker.EnqueueAsync(
+				Job.Define("later", _ => runs++), runAtMs: T0 + 60_000);
+
+			Assert.Equal(true, await h.Worker.CancelRunAsync(run!.Id));
+			Assert.Equal(1, h.Store.CountByStatus(JobStatus.Cancelled));
+
+			await h.Worker.TickAsync();
+			Assert.Equal(0, runs);
+		});
+
+		runner.TestAsync("cancelling a settled run says so rather than pretending", async () =>
+		{
+			var h = NewHarness();
+			var run = await h.Worker.EnqueueAsync(Job.Define("quick", _ => { }));
+			await h.Worker.TickAsync();
+
+			Assert.Equal(false, await h.Worker.CancelRunAsync(run!.Id));
+		});
+
+		runner.TestAsync("requeue puts a dead run back with a fresh set of attempts", async () =>
+		{
+			var h = NewHarness();
+			var attempts = 0;
+			var flaky = Job.Define("flaky", _ =>
+			{
+				attempts++;
+				if (attempts == 1) throw new PermanentJobException("nope");
+			});
+
+			var run = await h.Worker.EnqueueAsync(flaky, maxAttempts: 1);
+			Assert.Equal(1, (await h.Worker.TickAsync()).Dead);
+
+			h.Clock.Advance(1_000);
+			Assert.Equal(true, await h.Worker.RequeueRunAsync(run!.Id));
+
+			var requeued = await h.Store.GetAsync(run.Id);
+			Assert.Equal(JobStatus.Pending, requeued!.Status);
+			Assert.Equal(0, requeued.Attempt, "attempts start over");
+			Assert.True(requeued.LastError is null, "the error should be cleared");
+
+			Assert.Equal(1, (await h.Worker.TickAsync()).Succeeded);
+		});
+
+		runner.TestAsync("requeue can also revive a cancelled run", async () =>
+		{
+			var h = NewHarness();
+			var run = await h.Worker.EnqueueAsync(
+				Job.Define("later", _ => { }), runAtMs: T0 + 60_000);
+
+			await h.Worker.CancelRunAsync(run!.Id);
+			Assert.Equal(true, await h.Worker.RequeueRunAsync(run.Id));
+			Assert.Equal(JobStatus.Pending, (await h.Store.GetAsync(run.Id))!.Status);
+		});
+
+		runner.TestAsync("requeueing a run that is not settled says so", async () =>
+		{
+			var h = NewHarness();
+			var run = await h.Worker.EnqueueAsync(
+				Job.Define("later", _ => { }), runAtMs: T0 + 60_000);
+
+			Assert.Equal(false, await h.Worker.RequeueRunAsync(run!.Id));
+		});
+
+		runner.TestAsync("cancelled runs are counted separately", async () =>
+		{
+			var h = NewHarness();
+			var run = await h.Worker.EnqueueAsync(
+				Job.Define("later", _ => { }), runAtMs: T0 + 60_000);
+			await h.Worker.CancelRunAsync(run!.Id);
+
+			var stats = await h.Worker.StatsAsync();
+			Assert.Equal(1, stats.Cancelled);
+			Assert.Equal(0, stats.Pending);
+		});
 	}
 
 	private static void Retention(TestRunner runner)
@@ -715,7 +966,7 @@ internal static class ExecutionTests
 			var fired = new List<long>();
 			var sweep = Job.Define("sweep", _ => fired.Add(h.Clock.NowMs));
 
-			h.Worker.AddSchedule(ScheduleDefinition.For("sweep-every-30s", "on second=*/30", sweep));
+			await h.Worker.AddScheduleAsync(ScheduleDefinition.For("sweep-every-30s", "on second=*/30", sweep));
 
 			Assert.Equal(0, (await h.Worker.TickAsync()).Materialized, "nothing is due yet");
 
@@ -738,7 +989,7 @@ internal static class ExecutionTests
 			var runs = 0;
 			var sync = Job.Define("sync", _ => runs++);
 
-			h.Worker.AddSchedule(ScheduleDefinition.For("sync-loop", "every 10s", sync));
+			await h.Worker.AddScheduleAsync(ScheduleDefinition.For("sync-loop", "every 10s", sync));
 
 			h.Clock.Advance(10_000);
 			Assert.Equal(1, (await h.Worker.TickAsync()).Succeeded);
@@ -754,7 +1005,7 @@ internal static class ExecutionTests
 			var h = NewHarness();
 			var brittle = Job.Define("brittle", _ => throw new PermanentJobException("nope"));
 
-			h.Worker.AddSchedule(
+			await h.Worker.AddScheduleAsync(
 				ScheduleDefinition.For("brittle-loop", "every 10s", brittle, maxAttempts: 1));
 
 			h.Clock.Advance(10_000);
@@ -768,7 +1019,7 @@ internal static class ExecutionTests
 			{
 				var h = NewHarness();
 				var catchUp = Job.Define("catch-up", _ => { });
-				h.Worker.AddSchedule(ScheduleDefinition.For(
+				await h.Worker.AddScheduleAsync(ScheduleDefinition.For(
 					"every-10s", "on second=*/10", catchUp, misfire: misfire));
 
 				h.Clock.Advance(35_000);
@@ -796,8 +1047,8 @@ internal static class ExecutionTests
 			var b = new Worker(Options("b"));
 
 			var definition = ScheduleDefinition.For("shared-sweep", "on second=*/30", shared);
-			a.AddSchedule(definition);
-			b.AddSchedule(definition);
+			await a.AddScheduleAsync(definition);
+			await b.AddScheduleAsync(definition);
 
 			clock.Advance(30_000);
 			var first = await a.TickAsync();

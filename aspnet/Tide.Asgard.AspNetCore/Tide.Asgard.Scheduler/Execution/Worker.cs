@@ -88,8 +88,14 @@ public sealed record WorkerOptions
 	public IReadOnlyList<JobDefinition>? Jobs { get; init; }
 	public HandlerRegistry? Registry { get; init; }
 
-	// Recurring schedules to register up front.
+	// Recurring schedules to register up front. Registering touches the schedule
+	// store, so these are applied by CreateAsync rather than the constructor.
 	public IReadOnlyList<ScheduleDefinition>? Schedules { get; init; }
+
+	// Where schedules live. Defaults to memory, which is right when schedules are
+	// declared in code. Give it a PostgresScheduleStore to have a pause survive a
+	// restart, or to add a schedule without a deploy.
+	public IScheduleStore? ScheduleStore { get; init; }
 
 	public IClock Clock { get; init; } = SystemClock.Instance;
 
@@ -124,6 +130,10 @@ public sealed class Worker : IAsyncDisposable
 	// a fast schedule has been down for a long time.
 	private const int MaxCatchUp = 10_000;
 
+	// A tick materializes at most this many schedules, so one pass stays bounded
+	// no matter how many are registered.
+	private const int MaxSchedulesPerTick = 1_000;
+
 	private readonly IJobStore _store;
 	private readonly HandlerRegistry _registry;
 	private readonly IClock _clock;
@@ -138,7 +148,7 @@ public sealed class Worker : IAsyncDisposable
 	private readonly Func<double> _random;
 	private readonly Action<Exception, JobRun?> _onError;
 
-	private readonly Dictionary<string, TrackedSchedule> _schedules = [];
+	private readonly IScheduleStore _scheduleStore;
 	private readonly HashSet<string> _inFlight = [];
 	private readonly Lock _inFlightGate = new();
 	private readonly CancellationTokenSource _stop = new();
@@ -161,14 +171,26 @@ public sealed class Worker : IAsyncDisposable
 	// whose absence fails at the least convenient moment.
 	public static async Task<Worker> CreateAsync(WorkerOptions options, CancellationToken ct = default)
 	{
-		if (options.Store is ISchemaAwareJobStore schemaAware) await schemaAware.EnsureSchemaAsync(ct);
-		return new Worker(options);
+		if (options.Store is ISchemaAwareJobStore store) await store.EnsureSchemaAsync(ct);
+		if (options.ScheduleStore is ISchemaAwareScheduleStore schedules)
+		{
+			await schedules.EnsureSchemaAsync(ct);
+		}
+
+		var worker = new Worker(options);
+
+		// Registering a schedule touches the schedule store, which is why
+		// schedules are applied here rather than in the constructor.
+		foreach (var schedule in options.Schedules ?? []) await worker.AddScheduleAsync(schedule, ct);
+
+		return worker;
 	}
 
 	public Worker(WorkerOptions options)
 	{
 		_store = options.Store;
 		_registry = options.Registry ?? new HandlerRegistry();
+		_scheduleStore = options.ScheduleStore ?? new InMemoryScheduleStore();
 		if (options.Jobs is not null) _registry.RegisterAll(options.Jobs);
 		_clock = options.Clock;
 		_owner = options.Owner ?? $"worker-{Guid.NewGuid():N}"[..16];
@@ -181,30 +203,79 @@ public sealed class Worker : IAsyncDisposable
 		_retry = options.Retry;
 		_random = options.Random ?? System.Random.Shared.NextDouble;
 		_onError = options.OnError ?? ((_, _) => { });
-
-		foreach (var schedule in options.Schedules ?? []) AddSchedule(schedule);
 	}
 
-	// Registers a recurring schedule. Safe to call before or after Start.
-	public void AddSchedule(ScheduleDefinition definition)
+	// Registers a recurring schedule, or updates one that already exists.
+	// Re-registering keeps whether it is enabled, so a redeploy cannot silently
+	// resume something an operator paused, and keeps its place in time unless the
+	// expression itself changed.
+	public Task<ScheduleRecord> AddScheduleAsync(
+		ScheduleDefinition definition, CancellationToken ct = default)
 	{
-		if (_schedules.ContainsKey(definition.Name))
-		{
-			throw new InvalidOperationException($"schedule '{definition.Name}' is already registered");
-		}
 		if (!_registry.Has(definition.Job.Name)) _registry.Register(definition.Job);
 
 		var spec = ScheduleParser.Parse(definition.Expr);
+		var now = _clock.NowMs;
 
-		// Fixed delay measures from the end of the previous run, so its next
-		// occurrence is only knowable once the current one settles. Every other
-		// kind sits on a timeline the materializer can walk ahead of time.
-		var chainOnSettle = spec is IntervalSpec { Mode: IntervalMode.FixedDelay };
-
-		_schedules[definition.Name] = new TrackedSchedule(definition, spec, chainOnSettle)
+		return _scheduleStore.UpsertAsync(new ScheduleUpsert
 		{
-			NextFireAtMs = ScheduleEvaluator.NextFire(spec, _clock.NowMs)
-		};
+			Name = definition.Name,
+			Handler = definition.Job.Name,
+			Payload = definition.Payload,
+			Expr = definition.Expr,
+			Spec = spec,
+			Misfire = definition.Misfire,
+			MaxAttempts = definition.MaxAttempts ?? definition.Job.MaxAttempts,
+			NextFireAtMs = ScheduleEvaluator.NextFire(spec, now)
+		}, now, ct);
+	}
+
+	// Admin surface.
+
+	public Task<IReadOnlyList<ScheduleRecord>> ListSchedulesAsync(CancellationToken ct = default)
+		=> _scheduleStore.ListAsync(ct);
+
+	public Task<ScheduleRecord?> GetScheduleAsync(string name, CancellationToken ct = default)
+		=> _scheduleStore.GetAsync(name, ct);
+
+	public Task<bool> PauseScheduleAsync(string name, CancellationToken ct = default)
+		=> _scheduleStore.SetEnabledAsync(name, false, _clock.NowMs, ct);
+
+	public Task<bool> ResumeScheduleAsync(string name, CancellationToken ct = default)
+		=> _scheduleStore.SetEnabledAsync(name, true, _clock.NowMs, ct);
+
+	public Task<bool> RemoveScheduleAsync(string name, CancellationToken ct = default)
+		=> _scheduleStore.RemoveAsync(name, ct);
+
+	// Runs a schedule now without disturbing its timetable. The key is distinct
+	// from a materialized occurrence, so triggering twice in the same millisecond
+	// is the only way to collide, and a paused schedule can still be triggered on
+	// purpose.
+	public async Task<JobRun?> TriggerScheduleAsync(string name, CancellationToken ct = default)
+	{
+		var record = await _scheduleStore.GetAsync(name, ct);
+		if (record is null) return null;
+
+		var now = _clock.NowMs;
+		return await _store.EnqueueAsync(new JobRunRequest
+		{
+			Handler = record.Handler,
+			Payload = record.Payload,
+			RunAtMs = now,
+			ScheduleId = record.Name,
+			IdempotencyKey = $"{record.Name}:manual:{now}",
+			MaxAttempts = record.MaxAttempts ?? _retry.MaxAttempts
+		}, ct);
+	}
+
+	public Task<bool> CancelRunAsync(string runId, CancellationToken ct = default)
+		=> _store.CancelAsync(runId, _clock.NowMs, ct);
+
+	public Task<bool> RequeueRunAsync(
+		string runId, long? runAtMs = null, CancellationToken ct = default)
+	{
+		var now = _clock.NowMs;
+		return _store.RequeueAsync(runId, runAtMs ?? now, now, ct);
 	}
 
 	// Queues a one off job. Pass the definition, not its name, so the payload is
@@ -378,23 +449,23 @@ public sealed class Worker : IAsyncDisposable
 	{
 		var materialized = 0;
 
-		foreach (var tracked in _schedules.Values)
+		foreach (var record in await _scheduleStore.ListDueAsync(nowMs, MaxSchedulesPerTick, ct))
 		{
-			if (tracked.NextFireAtMs is null) continue;
+			if (record.NextFireAtMs is null) continue;
 
 			// Walk the occurrences that have come due since the last pass.
 			var due = new List<long>();
-			long? cursor = tracked.NextFireAtMs;
+			long? cursor = record.NextFireAtMs;
 
 			while (cursor is { } fire && fire <= nowMs && due.Count < MaxCatchUp)
 			{
 				due.Add(fire);
-				cursor = ScheduleEvaluator.NextFire(tracked.Spec, fire);
+				cursor = ScheduleEvaluator.NextFire(record.Spec, fire);
 			}
 
 			if (due.Count == 0) continue;
 
-			var toEnqueue = tracked.Definition.Misfire switch
+			var toEnqueue = record.Misfire switch
 			{
 				MisfirePolicy.FireAll => due,
 				MisfirePolicy.Skip => [],
@@ -403,30 +474,38 @@ public sealed class Worker : IAsyncDisposable
 
 			foreach (var fireAt in toEnqueue)
 			{
-				if (await _store.EnqueueAsync(RequestFor(tracked, fireAt), ct) is not null) materialized++;
+				// Enqueue before advancing. The key makes the insert idempotent,
+				// so a crash in between costs a repeated attempt rather than a
+				// lost occurrence.
+				if (await _store.EnqueueAsync(RequestFor(record, fireAt), ct) is not null) materialized++;
 			}
 
 			// A chained schedule re-arms when its run settles, not here.
-			tracked.NextFireAtMs = tracked.ChainOnSettle ? null : cursor;
+			await _scheduleStore.AdvanceAsync(
+				record.Name, ChainsOnSettle(record.Spec) ? null : cursor, due[^1], nowMs, ct);
 		}
 
 		return materialized;
 	}
 
-	private JobRunRequest RequestFor(TrackedSchedule tracked, long fireAtMs) => new()
+	private JobRunRequest RequestFor(ScheduleRecord record, long fireAtMs) => new()
 	{
-		Handler = tracked.Definition.Job.Name,
-		Payload = tracked.Definition.Payload,
+		Handler = record.Handler,
+		Payload = record.Payload,
 		// Jitter moves when the run happens but not its identity. Keying on the
 		// jittered time would let two workers compute different keys for the same
 		// occurrence and enqueue it twice.
-		RunAtMs = fireAtMs + JitterFor(tracked.Spec),
-		ScheduleId = tracked.Definition.Name,
-		IdempotencyKey = $"{tracked.Definition.Name}:{fireAtMs}",
-		MaxAttempts = tracked.Definition.MaxAttempts
-			?? tracked.Definition.Job.MaxAttempts
-			?? _retry.MaxAttempts
+		RunAtMs = fireAtMs + JitterFor(record.Spec),
+		ScheduleId = record.Name,
+		IdempotencyKey = $"{record.Name}:{fireAtMs}",
+		MaxAttempts = record.MaxAttempts ?? _retry.MaxAttempts
 	};
+
+	// Fixed delay measures from the end of the previous run, so its next
+	// occurrence is only knowable once the current one settles. Every other kind
+	// sits on a timeline the materializer can walk ahead of time.
+	private static bool ChainsOnSettle(ScheduleSpec spec)
+		=> spec is IntervalSpec { Mode: IntervalMode.FixedDelay };
 
 	private long JitterFor(ScheduleSpec spec)
 		=> spec is IntervalSpec { JitterMs: > 0 } interval
@@ -435,13 +514,15 @@ public sealed class Worker : IAsyncDisposable
 
 	// The successor to enqueue in the same call that settles this run. Null for
 	// one off work and for schedules the materializer already walks forward.
-	private JobRunRequest? ChainFor(JobRun run, long nowMs)
+	private async Task<JobRunRequest?> ChainForAsync(JobRun run, long nowMs, CancellationToken ct)
 	{
 		if (run.ScheduleId is null) return null;
-		if (!_schedules.TryGetValue(run.ScheduleId, out var tracked) || !tracked.ChainOnSettle) return null;
 
-		var fireAt = ScheduleEvaluator.NextFire(tracked.Spec, nowMs);
-		return fireAt is null ? null : RequestFor(tracked, fireAt.Value);
+		var record = await _scheduleStore.GetAsync(run.ScheduleId, ct);
+		if (record is null || !record.Enabled || !ChainsOnSettle(record.Spec)) return null;
+
+		var fireAt = ScheduleEvaluator.NextFire(record.Spec, nowMs);
+		return fireAt is null ? null : RequestFor(record, fireAt.Value);
 	}
 
 	private async Task<Outcome> DispatchAsync(JobRun run, CancellationToken ct)
@@ -454,7 +535,7 @@ public sealed class Worker : IAsyncDisposable
 			// deployment should instead claim only handlers it knows about.
 			var at = _clock.NowMs;
 			var error = $"no handler registered for '{run.Handler}'";
-			await _store.DeadLetterAsync(run.Id, error, ChainFor(run, at), at, ct);
+			await _store.DeadLetterAsync(run.Id, error, await ChainForAsync(run, at, ct), at, ct);
 			_onError(new InvalidOperationException(error), run);
 			return Outcome.Dead;
 		}
@@ -497,7 +578,7 @@ public sealed class Worker : IAsyncDisposable
 		}
 
 		var settledAt = _clock.NowMs;
-		await _store.CompleteAsync(run.Id, ChainFor(run, settledAt), settledAt, ct);
+		await _store.CompleteAsync(run.Id, await ChainForAsync(run, settledAt, ct), settledAt, ct);
 		return Outcome.Succeeded;
 	}
 
@@ -514,21 +595,10 @@ public sealed class Worker : IAsyncDisposable
 			return Outcome.Retried;
 		}
 
-		await _store.DeadLetterAsync(run.Id, error.Message, ChainFor(run, at), at, ct);
+		await _store.DeadLetterAsync(run.Id, error.Message, await ChainForAsync(run, at, ct), at, ct);
 		return Outcome.Dead;
 	}
 
 	private enum Outcome { Succeeded, Retried, Dead }
 
-	private sealed class TrackedSchedule(
-		ScheduleDefinition definition, ScheduleSpec spec, bool chainOnSettle)
-	{
-		public ScheduleDefinition Definition { get; } = definition;
-		public ScheduleSpec Spec { get; } = spec;
-		public bool ChainOnSettle { get; } = chainOnSettle;
-
-		// Null means the next occurrence is chained on settle rather than
-		// materialized on a tick.
-		public long? NextFireAtMs { get; set; }
-	}
 }

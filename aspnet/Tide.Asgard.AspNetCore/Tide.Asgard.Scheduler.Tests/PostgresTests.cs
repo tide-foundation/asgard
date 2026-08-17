@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Npgsql;
 using Tide.Asgard.Scheduler.Execution;
+using Tide.Asgard.Scheduler.Expression;
 using Tide.Asgard.Scheduler.Postgres;
 
 namespace Tide.Asgard.Scheduler.Tests;
@@ -58,6 +59,7 @@ internal static class PostgresTests
 		store.EnsureSchemaAsync().GetAwaiter().GetResult();
 
 		Store(runner, store);
+		Schedules(runner, new PostgresScheduleStore(db));
 		WorkerOnPostgres(runner, store);
 	}
 
@@ -380,7 +382,180 @@ internal static class PostgresTests
 		runner.TestAsync("stats on an empty table reports zeros", async () =>
 		{
 			await Reset();
-			Assert.Equal(new JobStoreStats(0, 0, 0, 0, 0), await store.StatsAsync(T0));
+			Assert.Equal(new JobStoreStats(0, 0, 0, 0, 0, 0), await store.StatsAsync(T0));
+		});
+
+		runner.TestAsync("cancel stops a pending run and refuses a settled one", async () =>
+		{
+			await Reset();
+			var run = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+
+			Assert.Equal(true, await store.CancelAsync(run!.Id, T0));
+			Assert.Equal(JobStatus.Cancelled, (await store.GetAsync(run.Id))!.Status);
+			Assert.Equal(false, await store.CancelAsync(run.Id, T0));
+		});
+
+		runner.TestAsync("cancel works on a leased run too", async () =>
+		{
+			await Reset();
+			var run = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+			await store.ClaimDueAsync("worker-a", T0, 30_000, 10);
+
+			Assert.Equal(true, await store.CancelAsync(run!.Id, T0));
+			Assert.True((await store.GetAsync(run.Id))!.LeaseOwner is null, "lease should be cleared");
+		});
+
+		runner.TestAsync("requeue revives a dead run with attempts reset", async () =>
+		{
+			await Reset();
+			var run = await store.EnqueueAsync(
+				new JobRunRequest { Handler = "h", RunAtMs = T0, MaxAttempts = 3 });
+			await store.ClaimDueAsync("worker-a", T0, 30_000, 10);
+			await store.DeadLetterAsync(run!.Id, "gave up", null, T0);
+
+			Assert.Equal(true, await store.RequeueAsync(run.Id, T0 + 5_000, T0));
+
+			var revived = await store.GetAsync(run.Id);
+			Assert.Equal(JobStatus.Pending, revived!.Status);
+			Assert.Equal(0, revived.Attempt);
+			Assert.True(revived.LastError is null, "the error should be cleared");
+			Assert.Equal(T0 + 5_000, revived.RunAtMs);
+		});
+
+		runner.TestAsync("requeue refuses a run that is not settled", async () =>
+		{
+			await Reset();
+			var run = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+			Assert.Equal(false, await store.RequeueAsync(run!.Id, T0, T0));
+		});
+	}
+
+	private static void Schedules(TestRunner runner, PostgresScheduleStore schedules)
+	{
+		runner.Suite("postgres schedule store");
+
+		Task<ScheduleRecord> Upsert(
+			string name = "nightly",
+			string expr = "on 03:00",
+			object? payload = null,
+			long? nextFireAtMs = null)
+			=> schedules.UpsertAsync(new ScheduleUpsert
+			{
+				Name = name,
+				Handler = "sweep",
+				Payload = payload ?? new Dictionary<string, object> { ["realmId"] = "tide" },
+				Expr = expr,
+				Spec = ScheduleParser.Parse(expr),
+				Misfire = MisfirePolicy.FireOnce,
+				MaxAttempts = 3,
+				NextFireAtMs = nextFireAtMs ?? T0 + 10_000
+			}, T0);
+
+		runner.TestAsync("upsert inserts and reads back every field", async () =>
+		{
+			await Reset();
+			var record = await Upsert();
+
+			Assert.Equal("nightly", record.Name);
+			Assert.Equal("sweep", record.Handler);
+			Assert.Equal("on 03:00", record.Expr);
+			Assert.Equal(true, record.Enabled);
+			Assert.Equal(MisfirePolicy.FireOnce, record.Misfire);
+			Assert.Equal(3, record.MaxAttempts);
+			Assert.Equal(T0 + 10_000, record.NextFireAtMs);
+		});
+
+		runner.TestAsync("the spec survives the round trip and still evaluates", async () =>
+		{
+			await Reset();
+			await Upsert(name: "sydney", expr: "on 02:30 tz=Australia/Sydney");
+
+			var record = await schedules.GetAsync("sydney");
+			var calendar = record!.Spec as CalendarSpec;
+			Assert.True(calendar is not null, "expected a calendar spec");
+			Assert.Equal("Australia/Sydney", calendar!.TimeZoneId);
+			Assert.Sequence([2], calendar.Hour.Values);
+		});
+
+		runner.TestAsync("re-registering keeps enabled and the next fire time", async () =>
+		{
+			await Reset();
+			await Upsert();
+			await schedules.SetEnabledAsync("nightly", false, T0);
+			await schedules.AdvanceAsync("nightly", T0 + 99_000, T0, T0);
+
+			await Upsert(payload: new Dictionary<string, object> { ["realmId"] = "changed" });
+
+			var record = await schedules.GetAsync("nightly");
+			Assert.Equal(false, record!.Enabled, "a redeploy must not silently resume it");
+			Assert.Equal(T0 + 99_000, record.NextFireAtMs, "and must not move it in time");
+		});
+
+		runner.TestAsync("changing the spec does reset the next fire time", async () =>
+		{
+			await Reset();
+			await Upsert();
+			await schedules.AdvanceAsync("nightly", T0 + 99_000, T0, T0);
+
+			await Upsert(expr: "on 04:00", nextFireAtMs: T0 + 20_000);
+
+			Assert.Equal(T0 + 20_000, (await schedules.GetAsync("nightly"))!.NextFireAtMs);
+		});
+
+		runner.TestAsync("listDue only returns enabled schedules that have come due", async () =>
+		{
+			await Reset();
+			await Upsert(name: "due", nextFireAtMs: T0);
+			await Upsert(name: "later", nextFireAtMs: T0 + 60_000);
+			await Upsert(name: "paused", nextFireAtMs: T0);
+			await schedules.SetEnabledAsync("paused", false, T0);
+
+			var due = await schedules.ListDueAsync(T0, 10);
+			Assert.Sequence(["due"], due.Select(x => x.Name));
+		});
+
+		runner.TestAsync("a schedule with no next fire time is never due", async () =>
+		{
+			await Reset();
+			await schedules.UpsertAsync(new ScheduleUpsert
+			{
+				Name = "chained", Handler = "sweep", Expr = "every 10s",
+				Spec = ScheduleParser.Parse("every 10s"), NextFireAtMs = null
+			}, T0);
+
+			Assert.Equal(0, (await schedules.ListDueAsync(T0 + 1_000_000, 10)).Count);
+		});
+
+		runner.TestAsync("advance records where it got to", async () =>
+		{
+			await Reset();
+			await Upsert();
+			await schedules.AdvanceAsync("nightly", T0 + 60_000, T0 + 10_000, T0);
+
+			var record = await schedules.GetAsync("nightly");
+			Assert.Equal(T0 + 60_000, record!.NextFireAtMs);
+			Assert.Equal(T0 + 10_000, record.LastFireAtMs);
+		});
+
+		runner.TestAsync("setEnabled and remove report whether they found anything", async () =>
+		{
+			await Reset();
+			await Upsert();
+
+			Assert.Equal(true, await schedules.SetEnabledAsync("nightly", false, T0));
+			Assert.Equal(false, await schedules.SetEnabledAsync("nope", false, T0));
+			Assert.Equal(true, await schedules.RemoveAsync("nightly"));
+			Assert.Equal(false, await schedules.RemoveAsync("nightly"));
+			Assert.True(await schedules.GetAsync("nightly") is null, "expected null");
+		});
+
+		runner.TestAsync("list is ordered by name", async () =>
+		{
+			await Reset();
+			await Upsert(name: "b");
+			await Upsert(name: "a");
+
+			Assert.Sequence(["a", "b"], (await schedules.ListAsync()).Select(x => x.Name));
 		});
 	}
 
@@ -437,8 +612,8 @@ internal static class PostgresTests
 			var b = NewWorker(store, [sweep], clock, "b");
 
 			var definition = ScheduleDefinition.For("shared-sweep", "on second=*/30", sweep);
-			a.AddSchedule(definition);
-			b.AddSchedule(definition);
+			await a.AddScheduleAsync(definition);
+			await b.AddScheduleAsync(definition);
 
 			clock.Advance(30_000);
 			var results = await Task.WhenAll(a.TickAsync(), b.TickAsync());
@@ -465,7 +640,8 @@ internal static class PostgresTests
 	// Every test starts from an empty table so ids and counts are predictable.
 	private static async Task Reset()
 	{
-		await using var command = _db.CreateCommand("truncate table asgard_job_runs restart identity");
+		await using var command = _db.CreateCommand(
+			"truncate table asgard_job_runs restart identity; truncate table asgard_schedules");
 		await command.ExecuteNonQueryAsync();
 	}
 

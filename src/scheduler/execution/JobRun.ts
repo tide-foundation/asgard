@@ -10,7 +10,10 @@ export enum JobStatus {
     Succeeded = "succeeded",
     // Terminal failure: attempts exhausted, or the handler raised
     // PermanentJobError.
-    Dead = "dead"
+    Dead = "dead",
+    // Stopped by an operator before it ran. Kept rather than deleted so the
+    // record of the decision survives.
+    Cancelled = "cancelled"
 }
 
 export interface JobRun {

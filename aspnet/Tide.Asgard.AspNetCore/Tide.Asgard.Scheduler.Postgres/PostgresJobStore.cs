@@ -49,7 +49,7 @@ public sealed class PostgresJobStore : IJobStore, ISchemaAwareJobStore, IAsyncDi
 		    updated_at_ms       bigint not null,
 
 		    constraint asgard_job_runs_status_check
-		        check (status in ('pending', 'leased', 'succeeded', 'dead'))
+		        check (status in ('pending', 'leased', 'succeeded', 'dead', 'cancelled'))
 		);
 
 		create index if not exists asgard_job_runs_due_idx
@@ -59,6 +59,41 @@ public sealed class PostgresJobStore : IJobStore, ISchemaAwareJobStore, IAsyncDi
 		create index if not exists asgard_job_runs_lease_idx
 		    on asgard_job_runs (lease_expires_at_ms)
 		    where status = 'leased';
+
+		do $$
+		begin
+		    if exists (
+		        select 1 from pg_constraint
+		        where conname = 'asgard_job_runs_status_check'
+		          and pg_get_constraintdef(oid) not like '%cancelled%'
+		    ) then
+		        alter table asgard_job_runs drop constraint asgard_job_runs_status_check;
+		        alter table asgard_job_runs add constraint asgard_job_runs_status_check
+		            check (status in ('pending', 'leased', 'succeeded', 'dead', 'cancelled'));
+		    end if;
+		end $$;
+
+		create table if not exists asgard_schedules (
+		    name            text primary key,
+		    handler         text    not null,
+		    payload         jsonb,
+		    expr            text    not null,
+		    spec            jsonb   not null,
+		    enabled         boolean not null default true,
+		    misfire         text    not null default 'fire_once',
+		    max_attempts    int,
+		    next_fire_at_ms bigint,
+		    last_fire_at_ms bigint,
+		    created_at_ms   bigint  not null,
+		    updated_at_ms   bigint  not null,
+
+		    constraint asgard_schedules_misfire_check
+		        check (misfire in ('fire_once', 'fire_all', 'skip'))
+		);
+
+		create index if not exists asgard_schedules_due_idx
+		    on asgard_schedules (next_fire_at_ms)
+		    where enabled and next_fire_at_ms is not null;
 		""";
 
 	private readonly NpgsqlDataSource _dataSource;
@@ -246,6 +281,46 @@ public sealed class PostgresJobStore : IJobStore, ISchemaAwareJobStore, IAsyncDi
 		return await command.ExecuteNonQueryAsync(ct);
 	}
 
+	public async Task<bool> CancelAsync(string runId, long nowMs, CancellationToken ct = default)
+	{
+		await using var command = _dataSource.CreateCommand("""
+			update asgard_job_runs
+			set status = 'cancelled',
+			    lease_owner = null,
+			    lease_expires_at_ms = null,
+			    last_error = 'cancelled',
+			    updated_at_ms = $2
+			where id = $1 and status in ('pending', 'leased')
+			""");
+
+		command.Parameters.Add(new NpgsqlParameter { Value = ParseId(runId) });
+		command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
+
+		return await command.ExecuteNonQueryAsync(ct) > 0;
+	}
+
+	public async Task<bool> RequeueAsync(
+		string runId, long runAtMs, long nowMs, CancellationToken ct = default)
+	{
+		await using var command = _dataSource.CreateCommand("""
+			update asgard_job_runs
+			set status = 'pending',
+			    run_at_ms = $2,
+			    attempt = 0,
+			    last_error = null,
+			    lease_owner = null,
+			    lease_expires_at_ms = null,
+			    updated_at_ms = $3
+			where id = $1 and status in ('dead', 'cancelled')
+			""");
+
+		command.Parameters.Add(new NpgsqlParameter { Value = ParseId(runId) });
+		command.Parameters.Add(new NpgsqlParameter { Value = runAtMs });
+		command.Parameters.Add(new NpgsqlParameter { Value = nowMs });
+
+		return await command.ExecuteNonQueryAsync(ct) > 0;
+	}
+
 	public async Task<JobStoreStats> StatsAsync(long nowMs, CancellationToken ct = default)
 	{
 		await using var command = _dataSource.CreateCommand("""
@@ -254,6 +329,7 @@ public sealed class PostgresJobStore : IJobStore, ISchemaAwareJobStore, IAsyncDi
 			    count(*) filter (where status = 'leased')    as leased,
 			    count(*) filter (where status = 'succeeded') as succeeded,
 			    count(*) filter (where status = 'dead')      as dead,
+			    count(*) filter (where status = 'cancelled') as cancelled,
 			    coalesce(max($1::bigint - run_at_ms)
 			        filter (where status = 'pending' and run_at_ms <= $1), 0) as oldest
 			from asgard_job_runs
@@ -269,7 +345,8 @@ public sealed class PostgresJobStore : IJobStore, ISchemaAwareJobStore, IAsyncDi
 			(int)reader.GetInt64(1),
 			(int)reader.GetInt64(2),
 			(int)reader.GetInt64(3),
-			reader.GetInt64(4));
+			(int)reader.GetInt64(4),
+			reader.GetInt64(5));
 	}
 
 	public async Task<JobRun?> GetAsync(string runId, CancellationToken ct = default)
@@ -384,6 +461,7 @@ public sealed class PostgresJobStore : IJobStore, ISchemaAwareJobStore, IAsyncDi
 		"leased" => JobStatus.Leased,
 		"succeeded" => JobStatus.Succeeded,
 		"dead" => JobStatus.Dead,
+		"cancelled" => JobStatus.Cancelled,
 		_ => throw new InvalidOperationException($"unknown job status '{status}'")
 	};
 }

@@ -8,6 +8,7 @@ export interface JobStoreStats {
     readonly leased: number;
     readonly succeeded: number;
     readonly dead: number;
+    readonly cancelled: number;
     // Age of the oldest run that is due and still waiting. This is the number
     // worth alerting on: queue depth lies, because a large batch looks exactly
     // like an outage, whereas a rising oldest age only ever means work is not
@@ -73,6 +74,16 @@ export interface JobStore {
     // default: a dead run is evidence, and deleting it silently loses the only
     // record that something never ran.
     purgeSettled(beforeMs: number, limit: number, includeDead?: boolean): Promise<number>;
+
+    // Admin. Stops a run that has not finished. Returns false when it is
+    // already settled, which is the honest answer to cancelling something that
+    // has already happened.
+    cancel(runId: string, nowMs: number): Promise<boolean>;
+
+    // Admin. Puts a dead or cancelled run back in the queue with a fresh set of
+    // attempts. Returns false when the run is not in a state that can be
+    // requeued.
+    requeue(runId: string, runAtMs: number, nowMs: number): Promise<boolean>;
 
     stats(nowMs: number): Promise<JobStoreStats>;
 

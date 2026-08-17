@@ -16,7 +16,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
-    PostgresJobStore, SCHEDULER_SCHEMA_SQL, Worker, FakeClock, JobStatus, JitterMode, defineJob
+    PostgresJobStore, PostgresScheduleStore, SCHEDULER_SCHEMA_SQL, Worker, FakeClock,
+    JobStatus, JitterMode, defineJob, parseSchedule, MisfirePolicy
 } = require(path.join(__dirname, "..", "..", "dist", "cjs", "scheduler", "index.js"));
 
 const DATABASE_URL = process.env.SCHEDULER_TEST_DATABASE_URL;
@@ -57,6 +58,7 @@ describe("postgres store", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DATABA
 
     beforeEach(async () => {
         await pool.query("truncate table asgard_job_runs restart identity");
+        await pool.query("truncate table asgard_schedules");
     });
 
     test("ensureSchema can run again over an existing schema", async () => {
@@ -314,8 +316,164 @@ describe("postgres store", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DATABA
     test("stats on an empty table reports zeros", async () => {
         const stats = await store.stats(T0);
         assert.deepEqual(stats, {
-            pending: 0, leased: 0, succeeded: 0, dead: 0, oldestPendingAgeMs: 0
+            pending: 0, leased: 0, succeeded: 0, dead: 0, cancelled: 0, oldestPendingAgeMs: 0
         });
+    });
+
+    test("cancel stops a pending run and refuses a settled one", async () => {
+        const run = await store.enqueue({ handler: "h", runAtMs: T0 });
+
+        assert.equal(await store.cancel(run.id, T0), true);
+        assert.equal((await store.get(run.id)).status, JobStatus.Cancelled);
+        assert.equal(await store.cancel(run.id, T0), false);
+    });
+
+    test("cancel works on a leased run too", async () => {
+        const run = await store.enqueue({ handler: "h", runAtMs: T0 });
+        await store.claimDue("worker-a", T0, 30_000, 10);
+
+        assert.equal(await store.cancel(run.id, T0), true);
+        assert.equal((await store.get(run.id)).leaseOwner, null);
+    });
+
+    test("requeue revives a dead run with attempts reset", async () => {
+        const run = await store.enqueue({ handler: "h", runAtMs: T0, maxAttempts: 3 });
+        await store.claimDue("worker-a", T0, 30_000, 10);
+        await store.deadLetter(run.id, "gave up", null, T0);
+
+        assert.equal(await store.requeue(run.id, T0 + 5_000, T0), true);
+
+        const revived = await store.get(run.id);
+        assert.equal(revived.status, JobStatus.Pending);
+        assert.equal(revived.attempt, 0);
+        assert.equal(revived.lastError, null);
+        assert.equal(revived.runAtMs, T0 + 5_000);
+    });
+
+    test("requeue refuses a run that is not settled", async () => {
+        const run = await store.enqueue({ handler: "h", runAtMs: T0 });
+        assert.equal(await store.requeue(run.id, T0, T0), false);
+    });
+});
+
+describe("postgres schedule store", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DATABASE_URL is not set" }, () => {
+    let pool;
+    let schedules;
+
+    before(async () => {
+        const { Pool } = require("pg");
+        pool = new Pool({ connectionString: DATABASE_URL });
+        await new PostgresJobStore(pool).ensureSchema();
+        schedules = new PostgresScheduleStore(pool);
+    });
+
+    after(async () => {
+        await pool.end();
+    });
+
+    beforeEach(async () => {
+        await pool.query("truncate table asgard_schedules");
+    });
+
+    const upsert = (overrides = {}) => schedules.upsert({
+        name: "nightly",
+        handler: "sweep",
+        payload: { realmId: "tide" },
+        expr: "on 03:00",
+        spec: parseSchedule("on 03:00"),
+        misfire: MisfirePolicy.FireOnce,
+        maxAttempts: 3,
+        nextFireAtMs: T0 + 10_000,
+        ...overrides
+    }, T0);
+
+    test("upsert inserts and reads back every field", async () => {
+        const record = await upsert();
+
+        assert.equal(record.name, "nightly");
+        assert.equal(record.handler, "sweep");
+        assert.deepEqual(record.payload, { realmId: "tide" });
+        assert.equal(record.expr, "on 03:00");
+        assert.equal(record.enabled, true);
+        assert.equal(record.misfire, MisfirePolicy.FireOnce);
+        assert.equal(record.maxAttempts, 3);
+        assert.equal(record.nextFireAtMs, T0 + 10_000);
+    });
+
+    test("the spec survives the round trip and still evaluates", async () => {
+        await schedules.upsert({
+            name: "sydney", handler: "sweep", expr: "on 02:30 tz=Australia/Sydney",
+            spec: parseSchedule("on 02:30 tz=Australia/Sydney"),
+            misfire: MisfirePolicy.FireOnce, maxAttempts: null, nextFireAtMs: T0
+        }, T0);
+
+        const record = await schedules.get("sydney");
+        assert.equal(record.spec.kind, "calendar");
+        assert.equal(record.spec.tz, "Australia/Sydney");
+        assert.deepEqual(record.spec.hour.values, [2]);
+    });
+
+    test("re-registering keeps enabled and the next fire time", async () => {
+        await upsert();
+        await schedules.setEnabled("nightly", false, T0);
+        await schedules.advance("nightly", T0 + 99_000, T0, T0);
+
+        await upsert({ payload: { realmId: "changed" } });
+
+        const record = await schedules.get("nightly");
+        assert.equal(record.enabled, false, "a redeploy must not silently resume it");
+        assert.equal(record.nextFireAtMs, T0 + 99_000, "and must not move it in time");
+        assert.deepEqual(record.payload, { realmId: "changed" }, "but the definition does update");
+    });
+
+    test("changing the spec does reset the next fire time", async () => {
+        await upsert();
+        await schedules.advance("nightly", T0 + 99_000, T0, T0);
+
+        await upsert({ expr: "on 04:00", spec: parseSchedule("on 04:00"), nextFireAtMs: T0 + 20_000 });
+
+        assert.equal((await schedules.get("nightly")).nextFireAtMs, T0 + 20_000);
+    });
+
+    test("listDue only returns enabled schedules that have come due", async () => {
+        await upsert({ name: "due", nextFireAtMs: T0 });
+        await upsert({ name: "later", nextFireAtMs: T0 + 60_000 });
+        await upsert({ name: "paused", nextFireAtMs: T0 });
+        await schedules.setEnabled("paused", false, T0);
+
+        const due = await schedules.listDue(T0, 10);
+        assert.deepEqual(due.map(s => s.name), ["due"]);
+    });
+
+    test("a schedule with no next fire time is never due", async () => {
+        await upsert({ nextFireAtMs: null });
+        assert.deepEqual(await schedules.listDue(T0 + 1_000_000, 10), []);
+    });
+
+    test("advance records where it got to", async () => {
+        await upsert();
+        await schedules.advance("nightly", T0 + 60_000, T0 + 10_000, T0);
+
+        const record = await schedules.get("nightly");
+        assert.equal(record.nextFireAtMs, T0 + 60_000);
+        assert.equal(record.lastFireAtMs, T0 + 10_000);
+    });
+
+    test("setEnabled and remove report whether they found anything", async () => {
+        await upsert();
+
+        assert.equal(await schedules.setEnabled("nightly", false, T0), true);
+        assert.equal(await schedules.setEnabled("nope", false, T0), false);
+        assert.equal(await schedules.remove("nightly"), true);
+        assert.equal(await schedules.remove("nightly"), false);
+        assert.equal(await schedules.get("nightly"), null);
+    });
+
+    test("list is ordered by name", async () => {
+        await upsert({ name: "b" });
+        await upsert({ name: "a" });
+
+        assert.deepEqual((await schedules.list()).map(s => s.name), ["a", "b"]);
     });
 });
 
@@ -336,6 +494,7 @@ describe("worker on postgres", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DA
 
     beforeEach(async () => {
         await pool.query("truncate table asgard_job_runs restart identity");
+        await pool.query("truncate table asgard_schedules");
     });
 
     function newWorker(clock, jobs, owner) {
