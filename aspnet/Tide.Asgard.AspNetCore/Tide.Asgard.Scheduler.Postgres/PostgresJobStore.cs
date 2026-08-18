@@ -30,72 +30,6 @@ public sealed class PostgresJobStore : IJobStore, ISchemaAwareJobStore, IAsyncDi
 		status, attempt, max_attempts, created_at_ms, updated_at_ms
 		""";
 
-	// Kept identical to sql/scheduler-schema.sql, which a test asserts.
-	public const string SchemaSql = """
-		create table if not exists asgard_job_runs (
-		    id                  bigserial primary key,
-		    schedule_id         text,
-		    handler             text   not null,
-		    payload             jsonb,
-		    idempotency_key     text   unique,
-		    run_at_ms           bigint not null,
-		    status              text   not null,
-		    attempt             int    not null default 0,
-		    max_attempts        int    not null default 1,
-		    lease_owner         text,
-		    lease_expires_at_ms bigint,
-		    last_error          text,
-		    created_at_ms       bigint not null,
-		    updated_at_ms       bigint not null,
-
-		    constraint asgard_job_runs_status_check
-		        check (status in ('pending', 'leased', 'succeeded', 'dead', 'cancelled'))
-		);
-
-		create index if not exists asgard_job_runs_due_idx
-		    on asgard_job_runs (run_at_ms, id)
-		    where status = 'pending';
-
-		create index if not exists asgard_job_runs_lease_idx
-		    on asgard_job_runs (lease_expires_at_ms)
-		    where status = 'leased';
-
-		do $$
-		begin
-		    if exists (
-		        select 1 from pg_constraint
-		        where conname = 'asgard_job_runs_status_check'
-		          and pg_get_constraintdef(oid) not like '%cancelled%'
-		    ) then
-		        alter table asgard_job_runs drop constraint asgard_job_runs_status_check;
-		        alter table asgard_job_runs add constraint asgard_job_runs_status_check
-		            check (status in ('pending', 'leased', 'succeeded', 'dead', 'cancelled'));
-		    end if;
-		end $$;
-
-		create table if not exists asgard_schedules (
-		    name            text primary key,
-		    handler         text    not null,
-		    payload         jsonb,
-		    expr            text    not null,
-		    spec            jsonb   not null,
-		    enabled         boolean not null default true,
-		    misfire         text    not null default 'fire_once',
-		    max_attempts    int,
-		    next_fire_at_ms bigint,
-		    last_fire_at_ms bigint,
-		    created_at_ms   bigint  not null,
-		    updated_at_ms   bigint  not null,
-
-		    constraint asgard_schedules_misfire_check
-		        check (misfire in ('fire_once', 'fire_all', 'skip'))
-		);
-
-		create index if not exists asgard_schedules_due_idx
-		    on asgard_schedules (next_fire_at_ms)
-		    where enabled and next_fire_at_ms is not null;
-		""";
-
 	private readonly NpgsqlDataSource _dataSource;
 	private readonly bool _ownsDataSource;
 
@@ -114,13 +48,10 @@ public sealed class PostgresJobStore : IJobStore, ISchemaAwareJobStore, IAsyncDi
 	public static PostgresJobStore Create(string connectionString)
 		=> new(NpgsqlDataSource.Create(connectionString), ownsDataSource: true);
 
-	// Applies the schema. Safe to call on every startup, and safe to call from
-	// several processes at once.
+	// Applies any migrations this database has not seen. Safe to call on every
+	// startup, and safe to call from several processes at once.
 	public async Task EnsureSchemaAsync(CancellationToken ct = default)
-	{
-		await using var command = _dataSource.CreateCommand(SchemaSql);
-		await command.ExecuteNonQueryAsync(ct);
-	}
+		=> await SchedulerMigrations.MigrateAsync(_dataSource, ct);
 
 	public async Task<JobRun?> EnqueueAsync(JobRunRequest request, CancellationToken ct = default)
 	{

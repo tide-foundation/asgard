@@ -16,8 +16,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
-    PostgresJobStore, PostgresScheduleStore, SCHEDULER_SCHEMA_SQL, Worker, FakeClock,
-    JobStatus, JitterMode, defineJob, parseSchedule, MisfirePolicy
+    PostgresJobStore, PostgresScheduleStore, SCHEDULER_MIGRATIONS, migrate, appliedMigrations,
+    Worker, FakeClock, JobStatus, JitterMode, defineJob, parseSchedule, MisfirePolicy
 } = require(path.join(__dirname, "..", "..", "dist", "cjs", "scheduler", "index.js"));
 
 const DATABASE_URL = process.env.SCHEDULER_TEST_DATABASE_URL;
@@ -32,12 +32,33 @@ function normalizeSql(sql) {
         .join("\n");
 }
 
-describe("schema stays in step with sql/scheduler-schema.sql", () => {
-    test("the embedded copy matches the canonical file", () => {
-        const canonical = fs.readFileSync(
-            path.join(__dirname, "..", "..", "sql", "scheduler-schema.sql"), "utf8");
+describe("migrations stay in step with sql/migrations", () => {
+    const dir = path.join(__dirname, "..", "..", "sql", "migrations");
 
-        assert.equal(normalizeSql(SCHEDULER_SCHEMA_SQL), normalizeSql(canonical));
+    test("every file on disk is embedded, and nothing extra is", () => {
+        const onDisk = fs.readdirSync(dir).filter(f => f.endsWith(".sql")).sort();
+        const embedded = SCHEDULER_MIGRATIONS.map(m => `${m.name}.sql`);
+
+        assert.deepEqual(embedded, onDisk);
+    });
+
+    for (const migration of SCHEDULER_MIGRATIONS) {
+        test(`${migration.name} matches its file`, () => {
+            const canonical = fs.readFileSync(path.join(dir, `${migration.name}.sql`), "utf8");
+            assert.equal(normalizeSql(migration.sql), normalizeSql(canonical));
+        });
+    }
+
+    test("versions start at 1 and increase by one", () => {
+        assert.deepEqual(
+            SCHEDULER_MIGRATIONS.map(m => m.version),
+            SCHEDULER_MIGRATIONS.map((_, i) => i + 1));
+    });
+
+    test("a file's number matches the version it declares", () => {
+        for (const migration of SCHEDULER_MIGRATIONS) {
+            assert.equal(Number(migration.name.split("-")[0]), migration.version, migration.name);
+        }
     });
 });
 
@@ -565,5 +586,86 @@ describe("worker on postgres", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DA
         assert.equal(first.materialized + second.materialized, 1, "materialized once");
         assert.equal(first.claimed + second.claimed, 1, "claimed once");
         assert.equal(runs, 1, "and executed once");
+    });
+});
+
+
+// Last in the file on purpose: these drop and rebuild the tables, so nothing
+// after them can depend on the state they leave behind.
+describe("migrating a database", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DATABASE_URL is not set" }, () => {
+    let pool;
+
+    before(async () => {
+        const { Pool } = require("pg");
+        pool = new Pool({ connectionString: DATABASE_URL });
+    });
+
+    after(async () => {
+        // Leave the database usable for a re-run.
+        await migrate(pool);
+        await pool.end();
+    });
+
+    const wipe = () => pool.query(
+        "drop table if exists asgard_job_runs, asgard_schedules, asgard_schema_migrations cascade");
+
+    test("a fresh database gets every migration, in order", async () => {
+        await wipe();
+
+        const applied = await migrate(pool);
+        assert.deepEqual(applied, SCHEDULER_MIGRATIONS.map(m => m.version));
+        assert.deepEqual(await appliedMigrations(pool), applied);
+    });
+
+    test("migrating again does nothing", async () => {
+        await wipe();
+        await migrate(pool);
+
+        assert.deepEqual(await migrate(pool), [], "already up to date");
+    });
+
+    test("only the missing ones are applied", async () => {
+        await wipe();
+        await migrate(pool);
+
+        // Forget the last migration, as though this database were one behind.
+        const last = SCHEDULER_MIGRATIONS[SCHEDULER_MIGRATIONS.length - 1];
+        await pool.query("delete from asgard_schema_migrations where version = $1", [last.version]);
+
+        assert.deepEqual(await migrate(pool), [last.version]);
+    });
+
+    test("each migration is safe to apply twice", async () => {
+        await wipe();
+        await migrate(pool);
+
+        // Replaying every migration against an already migrated database is the
+        // situation a crash between applying and recording leaves behind.
+        for (const migration of SCHEDULER_MIGRATIONS) {
+            await pool.query(migration.sql);
+        }
+
+        assert.deepEqual(await appliedMigrations(pool), SCHEDULER_MIGRATIONS.map(m => m.version));
+    });
+
+    test("concurrent migrators do not trip over each other", async () => {
+        await wipe();
+
+        const results = await Promise.all(Array.from({ length: 5 }, () => migrate(pool)));
+
+        // Exactly one caller does each piece of work, the rest find it done.
+        const total = results.reduce((sum, versions) => sum + versions.length, 0);
+        assert.equal(total, SCHEDULER_MIGRATIONS.length,
+            "each migration should be applied by exactly one caller");
+        assert.deepEqual(await appliedMigrations(pool), SCHEDULER_MIGRATIONS.map(m => m.version));
+    });
+
+    test("the schema works after migrating from nothing", async () => {
+        await wipe();
+        await migrate(pool);
+
+        const store = new PostgresJobStore(pool);
+        const run = await store.enqueue({ handler: "h", runAtMs: T0 });
+        assert.equal(await store.cancel(run.id, T0), true, "the cancelled status exists");
     });
 });

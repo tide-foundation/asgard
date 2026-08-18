@@ -215,7 +215,7 @@ const worker = await createScheduler({
 });
 ```
 
-Both tables come from the same schema file, so one `ensureSchema` covers them.
+Both tables come from the same migrations, so one `ensureSchema` covers them.
 
 ### Making it durable
 
@@ -234,10 +234,41 @@ await using var store = PostgresJobStore.Create(connectionString);
 await store.EnsureSchemaAsync();
 ```
 
-`ensureSchema` applies [`sql/scheduler-schema.sql`](../sql/scheduler-schema.sql).
-It is safe on every startup and safe from several processes at once, so there is
-no migration step to run by hand. If you would rather apply the DDL yourself, the
-file is the whole of it.
+`ensureSchema` runs the migrations in [`sql/migrations/`](../sql/migrations/) and
+returns the versions it applied. It is safe on every startup and safe from
+several processes at once, so there is no migration step to run by hand.
+
+### Migrations
+
+The schema is versioned. `asgard_schema_migrations` records what a database has
+seen, and `ensureSchema` applies whatever is missing, in order.
+
+```ts
+await migrate(pool);            // returns e.g. [2, 3], or [] when up to date
+await appliedMigrations(pool);  // [1, 2, 3]
+```
+
+Three rules keep this safe, and each has a test:
+
+- **Migrations are append only.** Never edit one that has shipped. Add the next
+  number instead. The suites assert that the embedded copies match
+  `sql/migrations/*.sql`, that versions run 1..n with no gaps, and that a file's
+  number matches the version it declares.
+- **Every migration is safe to apply twice.** A crash between applying one and
+  recording it must not leave the schema unrepeatable, so each uses
+  `create ... if not exists` or a guarded `alter`.
+- **Concurrent migrators are serialized** by a Postgres advisory lock, held for
+  the transaction that applies a migration and for the one that bootstraps the
+  migrations table itself. That second one matters: `create table if not exists`
+  is not atomic against another session doing the same thing, and two processes
+  starting together will otherwise collide in the system catalog.
+
+A caller that loses the race is told it applied nothing, rather than claiming
+work another process did, because the signal is the migrations insert's own
+`returning` rather than a before-and-after comparison.
+
+If you would rather apply the DDL yourself, the files are the whole of it, and
+running them in order is equivalent.
 
 The store takes a connection, not a driver choice. In .NET,
 `PostgresJobStore.Create` owns an `NpgsqlDataSource` for you, or pass one the
@@ -522,15 +553,15 @@ dotnet run --project examples/dotnet/SchedulerExample
 ## Tests
 
 ```bash
-npm test                                              # TypeScript, 200 tests
+npm test                                              # TypeScript, 205 tests
 
 cd aspnet/Tide.Asgard.AspNetCore
-dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 200 tests
+dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 205 tests
 ```
 
 The Postgres tests need a real database, because the two properties that matter,
 `SKIP LOCKED` and single statement atomicity, cannot be faked. Point them at a
-throwaway database and both suites grow to 241:
+throwaway database and both suites grow to 252:
 
 ```bash
 export SCHEDULER_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/scheduler_test
@@ -543,8 +574,8 @@ The sharpest of them enqueues 200 runs, claims them from 8 concurrent workers,
 and asserts every run was claimed exactly once and none appeared twice.
 
 A drift check runs either way: each store embeds a copy of the schema and asserts
-it still matches `sql/scheduler-schema.sql`, so the two runtimes and the canonical
-file cannot diverge.
+they still match `sql/migrations/*.sql`, so the two runtimes and the canonical
+files cannot diverge.
 
 Both suites run
 [`tests/fixtures/schedule-expression.json`](../tests/fixtures/schedule-expression.json),
@@ -588,7 +619,8 @@ src/scheduler/                                  TypeScript
     Clock.ts  RetryPolicy.ts  JobRun.ts  JobStore.ts
     InMemoryJobStore.ts  PostgresJobStore.ts
     ScheduleStore.ts  InMemoryScheduleStore.ts  PostgresScheduleStore.ts
-    MisfirePolicy.ts  JobDefinition.ts  HandlerRegistry.ts  Worker.ts  Scheduler.ts
+    Migrations.ts  MisfirePolicy.ts  JobDefinition.ts
+    HandlerRegistry.ts  Worker.ts  Scheduler.ts
 
 aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
   Expression/
@@ -601,9 +633,9 @@ aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
     JobDefinition.cs  HandlerRegistry.cs  Worker.cs
 
 aspnet/.../Tide.Asgard.Scheduler.Postgres/      .NET, needs Npgsql
-  PostgresJobStore.cs  PostgresScheduleStore.cs
+  PostgresJobStore.cs  PostgresScheduleStore.cs  SchedulerMigrations.cs
 
-sql/scheduler-schema.sql                        canonical DDL
+sql/migrations/*.sql                            canonical DDL, append only
 ```
 
 Everything outside the two timezone files is integer arithmetic running the same
@@ -615,11 +647,7 @@ TypeScript needs no split, because the store there accepts any object with a
 
 ## Not built yet
 
-1. **Schema migrations.** `ensureSchema` creates tables idempotently and carries
-   one guarded fix-up for a constraint that widened. That works, but it is not a
-   migration system. A versioned migration table is the eventual answer, and is
-   the main thing standing between this and a 1.0.
-2. **Notify instead of poll.** Polling every second is fine to thousands of jobs
+1. **Notify instead of poll.** Polling every second is fine to thousands of jobs
    a second. `LISTEN`/`NOTIFY` on insert would cut latency without raising the
    poll rate, but it is an optimisation rather than a gap.
 3. **An HTTP surface for the admin methods.** They exist on the worker; exposing

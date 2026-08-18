@@ -29,7 +29,8 @@ export { ScheduleStore, ScheduleRecord, ScheduleUpsert } from "./execution/Sched
 export { InMemoryScheduleStore } from "./execution/InMemoryScheduleStore";
 export { PostgresScheduleStore } from "./execution/PostgresScheduleStore";
 export { InMemoryJobStore } from "./execution/InMemoryJobStore";
-export { PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL } from "./execution/PostgresJobStore";
+export { PostgresJobStore, SqlClient } from "./execution/PostgresJobStore";
+export { Migration, SCHEDULER_MIGRATIONS, migrate, appliedMigrations } from "./execution/Migrations";
 export { HandlerRegistry, JobContext } from "./execution/HandlerRegistry";
 export { JobDefinition, defineJob, PayloadError } from "./execution/JobDefinition";
 export { createScheduler } from "./execution/Scheduler";

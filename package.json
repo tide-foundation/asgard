@@ -37,6 +37,7 @@
   "homepage": "https://github.com/tide-foundation/asgard#readme",
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "@types/pg": "^8.23.1",
     "pg": "^8.23.0",
     "typescript": "^5.9.3"
   }

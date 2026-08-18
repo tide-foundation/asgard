@@ -3,6 +3,7 @@
 
 import { specFromJson, specToJson } from "../expression/Serialization";
 import { MisfirePolicy } from "./MisfirePolicy";
+import { migrate } from "./Migrations";
 import { SqlClient } from "./PostgresJobStore";
 import { ScheduleRecord, ScheduleStore, ScheduleUpsert } from "./ScheduleStore";
 
@@ -13,6 +14,13 @@ const COLUMNS = `name, handler, payload, expr, spec, enabled, misfire, max_attem
 // schema file creates both tables, so pointing either one at a pool is enough.
 export class PostgresScheduleStore implements ScheduleStore {
     constructor(private readonly sql: SqlClient) { }
+
+    // Both tables come from the same migrations, so this is the job store's
+    // schema. Having it here means createScheduler can bring a schedule store up
+    // on its own.
+    async ensureSchema(): Promise<number[]> {
+        return migrate(this.sql);
+    }
 
     // One statement. On conflict the definition is updated but enabled is left
     // alone, so a redeploy cannot silently resume something an operator paused,

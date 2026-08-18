@@ -31,9 +31,10 @@ import { ScheduleStore, ScheduleRecord, ScheduleUpsert } from "./scheduler/execu
 import { InMemoryScheduleStore } from "./scheduler/execution/InMemoryScheduleStore";
 import { PostgresScheduleStore } from "./scheduler/execution/PostgresScheduleStore";
 import { InMemoryJobStore } from "./scheduler/execution/InMemoryJobStore";
+import { PostgresJobStore, SqlClient } from "./scheduler/execution/PostgresJobStore";
 import {
-    PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL
-} from "./scheduler/execution/PostgresJobStore";
+    Migration, SCHEDULER_MIGRATIONS, migrate, appliedMigrations
+} from "./scheduler/execution/Migrations";
 import { HandlerRegistry, JobContext } from "./scheduler/execution/HandlerRegistry";
 import { JobDefinition, defineJob, PayloadError } from "./scheduler/execution/JobDefinition";
 import { createScheduler } from "./scheduler/execution/Scheduler";
@@ -55,7 +56,8 @@ export { CalendarSpec, DstFoldPolicy, DstGapPolicy, IntervalMode, IntervalSpec, 
 export { Clock, systemClock, FakeClock }
 export { JitterMode, RetryPolicy, DEFAULT_RETRY_POLICY, retryDelayMs, shouldRetry, PermanentJobError }
 export { JobRun, JobRunRequest, JobStatus, JobStore, JobStoreStats, InMemoryJobStore }
-export { PostgresJobStore, SqlClient, SCHEDULER_SCHEMA_SQL }
+export { PostgresJobStore, SqlClient }
+export { Migration, SCHEDULER_MIGRATIONS, migrate, appliedMigrations }
 export { HandlerRegistry, JobContext }
 export { JobDefinition, defineJob, PayloadError }
 export { createScheduler }

@@ -35,11 +35,41 @@ internal static class PostgresTests
 
 	public static void Run(TestRunner runner, string repositoryRoot)
 	{
-		runner.Suite("schema stays in step with sql/scheduler-schema.sql");
-		runner.Test("the embedded copy matches the canonical file", () =>
+		runner.Suite("migrations stay in step with sql/migrations");
+
+		var migrationDir = Path.Combine(repositoryRoot, "sql", "migrations");
+
+		runner.Test("every file on disk is embedded, and nothing extra is", () =>
 		{
-			var canonical = File.ReadAllText(Path.Combine(repositoryRoot, "sql", "scheduler-schema.sql"));
-			Assert.Equal(Normalize(canonical), Normalize(PostgresJobStore.SchemaSql));
+			var onDisk = Directory.GetFiles(migrationDir, "*.sql")
+				.Select(Path.GetFileName)
+				.OrderBy(f => f, StringComparer.Ordinal)
+				.ToList();
+
+			Assert.Sequence(onDisk!, SchedulerMigrations.All.Select(m => $"{m.Name}.sql"));
+		});
+
+		foreach (var migration in SchedulerMigrations.All)
+		{
+			runner.Test($"{migration.Name} matches its file", () =>
+			{
+				var canonical = File.ReadAllText(Path.Combine(migrationDir, $"{migration.Name}.sql"));
+				Assert.Equal(Normalize(canonical), Normalize(migration.Sql));
+			});
+		}
+
+		runner.Test("versions start at 1 and increase by one", () =>
+			Assert.Sequence(
+				Enumerable.Range(1, SchedulerMigrations.All.Count),
+				SchedulerMigrations.All.Select(m => m.Version)));
+
+		runner.Test("a file's number matches the version it declares", () =>
+		{
+			foreach (var migration in SchedulerMigrations.All)
+			{
+				Assert.Equal(
+					int.Parse(migration.Name.Split('-')[0]), migration.Version, migration.Name);
+			}
 		});
 
 		var url = Environment.GetEnvironmentVariable("SCHEDULER_TEST_DATABASE_URL");
@@ -61,6 +91,7 @@ internal static class PostgresTests
 		Store(runner, store);
 		Schedules(runner, new PostgresScheduleStore(db));
 		WorkerOnPostgres(runner, store);
+		Migrating(runner, db);
 	}
 
 	private static void Store(TestRunner runner, PostgresJobStore store)
@@ -636,6 +667,94 @@ internal static class PostgresTests
 			Retry = NoJitter,
 			Random = () => 0.5
 		});
+
+	// Last on purpose: these drop and rebuild the tables, so nothing after them
+	// can depend on the state they leave behind.
+	private static void Migrating(TestRunner runner, NpgsqlDataSource db)
+	{
+		runner.Suite("migrating a database");
+
+		async Task Wipe()
+		{
+			await using var command = db.CreateCommand(
+				"drop table if exists asgard_job_runs, asgard_schedules, asgard_schema_migrations cascade");
+			await command.ExecuteNonQueryAsync();
+		}
+
+		var expected = SchedulerMigrations.All.Select(m => m.Version).ToList();
+
+		runner.TestAsync("a fresh database gets every migration, in order", async () =>
+		{
+			await Wipe();
+
+			var applied = await SchedulerMigrations.MigrateAsync(db);
+			Assert.Sequence(expected, applied);
+			Assert.Sequence(applied, await SchedulerMigrations.AppliedAsync(db));
+		});
+
+		runner.TestAsync("migrating again does nothing", async () =>
+		{
+			await Wipe();
+			await SchedulerMigrations.MigrateAsync(db);
+
+			Assert.Equal(0, (await SchedulerMigrations.MigrateAsync(db)).Count, "already up to date");
+		});
+
+		runner.TestAsync("only the missing ones are applied", async () =>
+		{
+			await Wipe();
+			await SchedulerMigrations.MigrateAsync(db);
+
+			// Forget the last migration, as though this database were one behind.
+			var last = SchedulerMigrations.All[^1];
+			await using (var forget = db.CreateCommand(
+				$"delete from asgard_schema_migrations where version = {last.Version}"))
+			{
+				await forget.ExecuteNonQueryAsync();
+			}
+
+			Assert.Sequence([last.Version], await SchedulerMigrations.MigrateAsync(db));
+		});
+
+		runner.TestAsync("each migration is safe to apply twice", async () =>
+		{
+			await Wipe();
+			await SchedulerMigrations.MigrateAsync(db);
+
+			// Replaying every migration against an already migrated database is
+			// the situation a crash between applying and recording leaves behind.
+			foreach (var migration in SchedulerMigrations.All)
+			{
+				await using var replay = db.CreateCommand(migration.Sql);
+				await replay.ExecuteNonQueryAsync();
+			}
+
+			Assert.Sequence(expected, await SchedulerMigrations.AppliedAsync(db));
+		});
+
+		runner.TestAsync("concurrent migrators do not trip over each other", async () =>
+		{
+			await Wipe();
+
+			var results = await Task.WhenAll(Enumerable.Range(0, 5)
+				.Select(_ => SchedulerMigrations.MigrateAsync(db)));
+
+			// Exactly one caller does each piece of work, the rest find it done.
+			Assert.Equal(expected.Count, results.Sum(r => r.Count),
+				"each migration should be applied by exactly one caller");
+			Assert.Sequence(expected, await SchedulerMigrations.AppliedAsync(db));
+		});
+
+		runner.TestAsync("the schema works after migrating from nothing", async () =>
+		{
+			await Wipe();
+			await SchedulerMigrations.MigrateAsync(db);
+
+			var store = new PostgresJobStore(db);
+			var run = await store.EnqueueAsync(new JobRunRequest { Handler = "h", RunAtMs = T0 });
+			Assert.Equal(true, await store.CancelAsync(run!.Id, T0), "the cancelled status exists");
+		});
+	}
 
 	// Every test starts from an empty table so ids and counts are predictable.
 	private static async Task Reset()

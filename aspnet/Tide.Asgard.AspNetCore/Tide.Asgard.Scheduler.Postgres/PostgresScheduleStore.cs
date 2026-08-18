@@ -39,12 +39,11 @@ public sealed class PostgresScheduleStore : IScheduleStore, ISchemaAwareSchedule
 	public static PostgresScheduleStore Create(string connectionString)
 		=> new(NpgsqlDataSource.Create(connectionString), ownsDataSource: true);
 
-	// Both tables come from the same schema, so this is the job store's schema.
+	// Both tables come from the same migrations, so this is the job store's
+	// schema. Having it here means Worker.CreateAsync can bring a schedule store
+	// up on its own.
 	public async Task EnsureSchemaAsync(CancellationToken ct = default)
-	{
-		await using var command = _dataSource.CreateCommand(PostgresJobStore.SchemaSql);
-		await command.ExecuteNonQueryAsync(ct);
-	}
+		=> await SchedulerMigrations.MigrateAsync(_dataSource, ct);
 
 	// One statement. On conflict the definition is updated but enabled is left
 	// alone, so a redeploy cannot silently resume something an operator paused,
