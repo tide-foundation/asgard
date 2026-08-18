@@ -75,6 +75,29 @@ internal static class AspNetCoreTests
 				"expected the same worker both times");
 		});
 
+		runner.TestAsync("the store factory is invoked once, not once per consumer", async () =>
+		{
+			var built = 0;
+			var store = new InMemoryJobStore();
+
+			using var provider = Build(
+				s =>
+				{
+					s.PollIntervalMs = 50;
+					s.UseStore(_ => { Interlocked.Increment(ref built); return store; });
+				},
+				new RunCounter());
+
+			// Both the worker and the hosted service need the store. A factory
+			// that builds a connection pool must not be called twice.
+			_ = provider.GetRequiredService<Worker>();
+			var hosted = provider.GetServices<IHostedService>().Single();
+			await hosted.StartAsync(CancellationToken.None);
+			await hosted.StopAsync(CancellationToken.None);
+
+			Assert.Equal(1, built);
+		});
+
 		runner.Test("a hosted service is registered to run it", () =>
 		{
 			using var provider = Build(s => { }, new RunCounter());

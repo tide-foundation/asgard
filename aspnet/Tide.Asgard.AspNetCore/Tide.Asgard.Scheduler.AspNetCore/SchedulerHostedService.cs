@@ -13,30 +13,31 @@ namespace Tide.Asgard.Scheduler.AspNetCore;
 // in StartAsync also means a database that is unreachable fails startup loudly
 // instead of leaving a worker running against nothing.
 internal sealed class SchedulerHostedService(
-	Worker worker,
-	SchedulerBuilder builder,
-	IServiceProvider provider) : IHostedService
+	SchedulerRuntime runtime,
+	SchedulerBuilder builder) : IHostedService
 {
+	private Worker Worker => runtime.Worker;
+
 	public async Task StartAsync(CancellationToken ct)
 	{
-		if (builder.StoreFactory(provider) is ISchemaAwareJobStore store)
+		if (runtime.Store is ISchemaAwareJobStore store)
 		{
 			await store.EnsureSchemaAsync(ct);
 		}
-		if (builder.ScheduleStoreFactory?.Invoke(provider) is ISchemaAwareScheduleStore schedules)
+		if (runtime.ScheduleStore is ISchemaAwareScheduleStore schedules)
 		{
 			await schedules.EnsureSchemaAsync(ct);
 		}
 
-		foreach (var schedule in builder.BuildSchedules(worker.Jobs))
+		foreach (var schedule in builder.BuildSchedules(Worker.Jobs))
 		{
-			await worker.AddScheduleAsync(schedule, ct);
+			await Worker.AddScheduleAsync(schedule, ct);
 		}
 
-		worker.Start();
+		Worker.Start();
 	}
 
 	// Stops claiming and waits for in flight handlers, so a rolling deploy drains
 	// rather than abandoning work to the reaper.
-	public Task StopAsync(CancellationToken ct) => worker.StopAsync();
+	public Task StopAsync(CancellationToken ct) => Worker.StopAsync();
 }

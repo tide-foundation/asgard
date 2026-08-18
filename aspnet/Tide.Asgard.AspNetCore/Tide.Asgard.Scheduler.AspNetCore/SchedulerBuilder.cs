@@ -112,10 +112,13 @@ public sealed class SchedulerBuilder
 		return this;
 	}
 
-	internal WorkerOptions BuildOptions(IServiceProvider provider) => new()
+	// Takes the stores already resolved rather than resolving them itself, so a
+	// factory that builds a connection pool is only ever called once.
+	internal WorkerOptions BuildOptions(
+		IServiceProvider provider, IJobStore store, IScheduleStore? scheduleStore) => new()
 	{
-		Store = StoreFactory(provider),
-		ScheduleStore = ScheduleStoreFactory?.Invoke(provider),
+		Store = store,
+		ScheduleStore = scheduleStore,
 		Notifier = NotifierFactory?.Invoke(provider),
 		Observer = ObserverFactory?.Invoke(provider),
 		Jobs = _jobs.Select(build => build(provider)).ToList(),

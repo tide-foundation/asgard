@@ -25,7 +25,18 @@ public static class ServiceCollectionExtensions
 		configure(builder);
 
 		services.AddSingleton(builder);
-		services.AddSingleton(provider => new Worker(builder.BuildOptions(provider)));
+
+		services.AddSingleton(provider =>
+		{
+			// Resolved once, here, and shared. See SchedulerRuntime.
+			var store = builder.StoreFactory(provider);
+			var scheduleStore = builder.ScheduleStoreFactory?.Invoke(provider);
+
+			return new SchedulerRuntime(
+				store, scheduleStore, new Worker(builder.BuildOptions(provider, store, scheduleStore)));
+		});
+
+		services.AddSingleton(provider => provider.GetRequiredService<SchedulerRuntime>().Worker);
 		services.AddHostedService<SchedulerHostedService>();
 
 		return services;
