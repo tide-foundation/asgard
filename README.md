@@ -19,7 +19,8 @@ The .NET solution lives at [aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln](aspne
 | [Tide.Asgard.Core](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/) | Cryptography primitives (Ed25519 / EdDSA) |
 | [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) | End-to-end working sample |
 | [Tide.Asgard.Scheduler](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler/) | Task scheduling: schedule expressions, job store contract, worker and retries. No dependencies |
-| [Tide.Asgard.Scheduler.Postgres](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler.Postgres/) | Durable Postgres job store for the scheduler |
+| [Tide.Asgard.Scheduler.Postgres](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler.Postgres/) | Durable Postgres job and schedule stores, migrations, notifier |
+| [Tide.Asgard.Scheduler.AspNetCore](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler.AspNetCore/) | Dependency injection and hosted service wiring for the scheduler |
 | [Tide.Asgard.Scheduler.Tests](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler.Tests/) | Scheduler test suite, no test framework required |
 
 The SDK is currently consumed via `<ProjectReference>` — see [Tide.Asgard.AspNetCore.Example.csproj](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/Tide.Asgard.AspNetCore.Example.csproj) for the wiring.
@@ -204,25 +205,18 @@ A job definition ties a name, a payload type and a handler together, so
 enqueueing a job cannot disagree with the handler that receives it:
 
 ```csharp
-var reconcile = Job.Define<ReconcilePayload>(
-    "reconcile-orks", async (payload, ctx) => await Reconcile(payload.RealmId));
-
-await using var worker = await Worker.CreateAsync(new WorkerOptions
-{
-    Store = PostgresJobStore.Create(connectionString),
-    Jobs = [reconcile],
-    Schedules =
-    [
-        ScheduleDefinition.For(
-            "nightly", "on 03:00 tz=Australia/Sydney", reconcile, new ReconcilePayload("tide"))
-    ]
-});
-
-worker.Start();
+builder.Services.AddAsgardScheduler(scheduler => scheduler
+    .UseStore(_ => PostgresJobStore.Create(connectionString))
+    .UseLogging()
+    .AddJob<ReconcileOrks, ReconcilePayload>("reconcile-orks")
+    .AddSchedule("nightly", "on 03:00 tz=Australia/Sydney", "reconcile-orks",
+        new ReconcilePayload("tide")));
 ```
 
-You supply a connection string, the SDK supplies the schema, the claim and lease
-queries, retries with backoff, and the reaper.
+Handlers are classes, so they take constructor dependencies, and each run is
+resolved from its own scope. You supply a connection string, the SDK supplies the
+schema and migrations, the claim and lease queries, retries with backoff, the
+reaper, and graceful drain on shutdown.
 
 See [docs/task-scheduler.md](docs/task-scheduler.md) for the language reference,
 recipes, and what is still to be built. Runnable examples live in

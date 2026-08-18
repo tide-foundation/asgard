@@ -131,7 +131,7 @@ public sealed record WorkerOptions
 public sealed record TickResult(
 	int Reaped, int Materialized, int Claimed, int Succeeded, int Retried, int Dead, int Purged);
 
-public sealed class Worker : IAsyncDisposable
+public sealed class Worker : IAsyncDisposable, IDisposable
 {
 	// Guards against enumerating an unbounded number of missed occurrences when
 	// a fast schedule has been down for a long time.
@@ -215,6 +215,10 @@ public sealed class Worker : IAsyncDisposable
 		_random = options.Random ?? System.Random.Shared.NextDouble;
 		_onError = options.OnError ?? ((_, _) => { });
 	}
+
+	// The jobs this worker knows about, in registration order. Lets a caller that
+	// only has names, such as configuration, resolve them to definitions.
+	public IReadOnlyList<JobDefinition> Jobs => _registry.Definitions();
 
 	// Registers a recurring schedule, or updates one that already exists.
 	// Re-registering keeps whether it is enabled, so a redeploy cannot silently
@@ -516,6 +520,16 @@ public sealed class Worker : IAsyncDisposable
 	public async ValueTask DisposeAsync()
 	{
 		await StopAsync();
+		_stop.Dispose();
+	}
+
+	// The graceful path is StopAsync, which a hosted service calls on shutdown.
+	// This exists because a container holding the worker as a singleton has to be
+	// able to dispose it, and a container disposed synchronously refuses to hold
+	// anything that is only IAsyncDisposable.
+	public void Dispose()
+	{
+		StopAsync().GetAwaiter().GetResult();
 		_stop.Dispose();
 	}
 

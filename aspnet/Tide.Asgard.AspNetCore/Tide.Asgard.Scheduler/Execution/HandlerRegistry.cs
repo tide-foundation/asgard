@@ -49,4 +49,6 @@ public sealed class HandlerRegistry
 	public bool Has(string name) => _jobs.ContainsKey(name);
 
 	public IReadOnlyList<string> Names() => _jobs.Keys.ToList();
+
+	public IReadOnlyList<JobDefinition> Definitions() => _jobs.Values.ToList();
 }

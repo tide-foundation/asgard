@@ -217,6 +217,24 @@ internal static class ExecutionTests
 			Assert.Equal(1, h.Store.ByStatus(JobStatus.Dead)[0].Attempt);
 		});
 
+		runner.TestAsync("an async payload free handler is awaited, not fired and forgotten", async () =>
+		{
+			var h = NewHarness();
+			var finished = false;
+
+			// Without a Task returning overload this lambda would bind to the
+			// Action one, become async void, and the run would settle before the
+			// delay completed.
+			await h.Worker.EnqueueAsync(Job.Define("slow", async _ =>
+			{
+				await Task.Delay(50);
+				finished = true;
+			}));
+
+			Assert.Equal(1, (await h.Worker.TickAsync()).Succeeded);
+			Assert.Equal(true, finished, "the worker should have waited for the handler");
+		});
+
 		runner.TestAsync("a job with no payload receives null", async () =>
 		{
 			var h = NewHarness();

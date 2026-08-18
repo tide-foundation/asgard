@@ -21,6 +21,7 @@ FixtureTests.Run(runner, fixturePath);
 ExpressionTests.Run(runner);
 SerializationTests.Run(runner, fixturePath);
 ExecutionTests.Run(runner);
+AspNetCoreTests.Run(runner);
 PostgresTests.Run(runner, Path.GetFullPath(Path.Combine(fixturePath, "..", "..", "..")));
 
 return runner.Report("scheduler tests");

@@ -95,6 +95,15 @@ public static class Job
 		}, parse, maxAttempts);
 
 	// Convenience for jobs that carry no payload.
+	//
+	// Both shapes exist so that an async lambda binds to the Task returning one.
+	// With only the Action overload an async lambda would compile as async void,
+	// and the worker would settle the run the moment the handler yielded rather
+	// than when its work finished.
+	public static JobDefinition<object?> Define(
+		string name, Func<JobContext, Task> handler, int? maxAttempts = null)
+		=> new(name, (_, ctx) => handler(ctx), null, maxAttempts);
+
 	public static JobDefinition<object?> Define(
 		string name, Action<JobContext> handler, int? maxAttempts = null)
 		=> new(name, (_, ctx) =>

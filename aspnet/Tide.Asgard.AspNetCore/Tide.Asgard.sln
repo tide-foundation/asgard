@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SchedulerExample", "..\..\e
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tide.Asgard.Scheduler.Postgres", "Tide.Asgard.Scheduler.Postgres\Tide.Asgard.Scheduler.Postgres.csproj", "{4DE73D38-10FD-4A18-BAA1-926E34C9732E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tide.Asgard.Scheduler.AspNetCore", "Tide.Asgard.Scheduler.AspNetCore\Tide.Asgard.Scheduler.AspNetCore.csproj", "{29CBC222-B6DC-4789-AFC1-22C65A849D37}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -125,6 +127,18 @@ Global
 		{4DE73D38-10FD-4A18-BAA1-926E34C9732E}.Release|x64.Build.0 = Release|Any CPU
 		{4DE73D38-10FD-4A18-BAA1-926E34C9732E}.Release|x86.ActiveCfg = Release|Any CPU
 		{4DE73D38-10FD-4A18-BAA1-926E34C9732E}.Release|x86.Build.0 = Release|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Debug|x64.Build.0 = Debug|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Debug|x86.Build.0 = Debug|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Release|Any CPU.Build.0 = Release|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Release|x64.ActiveCfg = Release|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Release|x64.Build.0 = Release|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Release|x86.ActiveCfg = Release|Any CPU
+		{29CBC222-B6DC-4789-AFC1-22C65A849D37}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

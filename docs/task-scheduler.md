@@ -499,6 +499,63 @@ The JSON carries a version, unrestricted fields collapse to `"any"`, and the
 timezone is validated on load rather than at fire time so a zone this host does
 not know fails where someone is watching.
 
+## ASP.NET Core
+
+`Tide.Asgard.Scheduler.AspNetCore` wires the whole thing into a host in one call
+and runs it for the lifetime of the application.
+
+```csharp
+builder.Services.AddAsgardScheduler(scheduler => scheduler
+    .UseStore(_ => PostgresJobStore.Create(connectionString))
+    .UseScheduleStore(_ => PostgresScheduleStore.Create(connectionString))
+    .UseLogging()
+    .AddJob<ReconcileOrks, ReconcilePayload>("reconcile-orks")
+    .AddSchedule("nightly", "on 03:00 tz=Australia/Sydney", "reconcile-orks",
+        new ReconcilePayload("tide")));
+```
+
+A job registered this way is a class, so it can take constructor dependencies:
+
+```csharp
+public sealed class ReconcileOrks(OrkDbContext db, ILogger<ReconcileOrks> logger)
+    : IJobHandler<ReconcilePayload>
+{
+    public async Task HandleAsync(ReconcilePayload payload, JobContext context)
+    {
+        await db.ReconcileAsync(payload.RealmId, context.CancellationToken);
+    }
+}
+```
+
+**Each run gets its own scope.** The handler is resolved from a fresh scope and
+disposed when the run finishes, so a scoped `DbContext` behaves the way it does
+in a request rather than being shared across every job in the process. There is a
+test asserting a scoped dependency is constructed once per run.
+
+Three more things worth knowing:
+
+- **The schema and the schedules are applied at startup**, not while the
+  container is being built, because both do I/O and a service factory cannot
+  await. A database that is unreachable therefore fails startup loudly rather
+  than leaving a worker running against nothing.
+- **A schedule naming a job that is not registered fails startup**, rather than
+  sitting there never firing.
+- **Shutdown drains.** The hosted service calls `StopAsync`, which stops claiming
+  and waits for handlers already running, so a rolling deploy finishes its work
+  instead of abandoning it to the reaper.
+
+The `Worker` is registered as a singleton, so the admin surface is available
+anywhere in the app:
+
+```csharp
+app.MapPost("/admin/schedules/{name}/pause", async (string name, Worker scheduler)
+    => await scheduler.PauseScheduleAsync(name) ? Results.NoContent() : Results.NotFound());
+```
+
+`UseLogging` adds an observer that logs a line per run through the host's
+`ILogger`: information on success, warning with the next attempt time on a retry,
+error when a run gives up. Use `UseObserver` instead to plug in your own.
+
 ## Recipes
 
 Most schedules are one line from this table.
@@ -643,12 +700,12 @@ dotnet run --project examples/dotnet/SchedulerExample
 npm test                                              # TypeScript, 224 tests
 
 cd aspnet/Tide.Asgard.AspNetCore
-dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 224 tests
+dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 237 tests
 ```
 
 The Postgres tests need a real database, because the two properties that matter,
 `SKIP LOCKED` and single statement atomicity, cannot be faked. Point them at a
-throwaway database and both suites grow to 276:
+throwaway database and the suites grow to 276 and 289:
 
 ```bash
 export SCHEDULER_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/scheduler_test
@@ -676,7 +733,9 @@ a frozen conformance file with two families:
 
 On top of that each runtime has unit tests over the parsed spec, over
 serialization, and over the store and worker, mirrored case for case so the two
-suites stay comparable. Serialization is checked by running every conformance
+suites stay comparable. The .NET suite is larger by the ASP.NET Core wiring
+tests, which have no TypeScript counterpart because that is the .NET host's
+story rather than part of the shared contract. Serialization is checked by running every conformance
 fixture through storage and asserting the restored spec produces identical fire
 times, which covers every expression shape rather than a hand picked few.
 
@@ -721,6 +780,11 @@ aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
     IJobNotifier.cs  IJobObserver.cs  JobDefinition.cs
     HandlerRegistry.cs  Worker.cs
 
+aspnet/.../Tide.Asgard.Scheduler.AspNetCore/    .NET, needs Microsoft.Extensions.*
+  IJobHandler.cs  SchedulerBuilder.cs
+  SchedulerHostedService.cs  LoggingJobObserver.cs
+  ServiceCollectionExtensions.cs
+
 aspnet/.../Tide.Asgard.Scheduler.Postgres/      .NET, needs Npgsql
   PostgresJobStore.cs  PostgresScheduleStore.cs
   PostgresNotifier.cs  SchedulerMigrations.cs
@@ -737,11 +801,10 @@ TypeScript needs no split, because the store there accepts any object with a
 
 ## Not built yet
 
-1. **An HTTP surface for the admin methods.** They exist on the worker; exposing
-   them is deliberately left to the host, since routing and authorisation belong
-   to the application rather than the SDK.
-2. **Dependency injection and hosted service wiring for ASP.NET Core.** A
-   `services.AddAsgardScheduler(...)` and an `IHostedService` would save every
-   .NET host the same dozen lines. It is left out for now because the scheduler
-   core deliberately has no dependencies, so it belongs in a separate package
-   alongside the Postgres one rather than in the core.
+1. **An HTTP surface for the admin methods.** The `Worker` is injectable and the
+   methods are there, so a handful of endpoints is a few lines, as above. Routing
+   and authorisation belong to the application rather than the SDK, so shipping
+   them here would be guessing at both.
+2. **The equivalent wiring for a TypeScript host.** There is no single framework
+   to target the way there is on .NET, so the shape would be a guess. The pieces
+   compose in about the same number of lines either way.
