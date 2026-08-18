@@ -31,6 +31,9 @@ import { ScheduleStore, ScheduleRecord, ScheduleUpsert } from "./scheduler/execu
 import { InMemoryScheduleStore } from "./scheduler/execution/InMemoryScheduleStore";
 import { JobNotifier, InMemoryNotifier } from "./scheduler/execution/JobNotifier";
 import {
+    JobObserver, RunOutcome, RunStartedEvent, RunFinishedEvent, TickFinishedEvent
+} from "./scheduler/execution/JobObserver";
+import {
     PostgresNotifier, ListenClient, JOB_CHANNEL
 } from "./scheduler/execution/PostgresNotifier";
 import { PostgresScheduleStore } from "./scheduler/execution/PostgresScheduleStore";
@@ -69,3 +72,4 @@ export { Worker, WorkerOptions, TickResult, ScheduleDefinition, RetentionPolicy,
 export { MisfirePolicy, ScheduleStore, ScheduleRecord, ScheduleUpsert }
 export { InMemoryScheduleStore, PostgresScheduleStore }
 export { JobNotifier, InMemoryNotifier, PostgresNotifier, ListenClient, JOB_CHANNEL }
+export { JobObserver, RunOutcome, RunStartedEvent, RunFinishedEvent, TickFinishedEvent }

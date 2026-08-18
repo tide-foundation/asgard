@@ -857,6 +857,152 @@ describe("automatic lease renewal", () => {
     });
 });
 
+describe("observers", () => {
+    function recording(extra = {}) {
+        const events = [];
+        const observer = {
+            runStarted: e => events.push({ kind: "started", id: e.run.id, handler: e.run.handler }),
+            runFinished: e => events.push({
+                kind: "finished",
+                id: e.run.id,
+                outcome: e.outcome,
+                attempt: e.run.attempt,
+                error: e.error === undefined ? null : e.error.message,
+                nextAttemptAtMs: e.nextAttemptAtMs ?? null
+            }),
+            tickFinished: e => events.push({ kind: "tick", claimed: e.result.claimed })
+        };
+        return { events, harness: harness({ observer, ...extra }) };
+    }
+
+    test("a successful run reports started then finished", async () => {
+        const { events, harness: h } = recording();
+        await h.worker.enqueue(job("greet", () => { }));
+        await h.worker.tick();
+
+        assert.deepEqual(events.filter(e => e.kind !== "tick"), [
+            { kind: "started", id: "run-1", handler: "greet" },
+            { kind: "finished", id: "run-1", outcome: "succeeded", attempt: 1, error: null, nextAttemptAtMs: null }
+        ]);
+    });
+
+    test("a retry reports the outcome and when the next attempt is due", async () => {
+        const { events, harness: h } = recording();
+        await h.worker.enqueue(job("flaky", () => { throw new Error("boom"); }), undefined, {
+            maxAttempts: 3
+        });
+        await h.worker.tick();
+
+        const finished = events.find(e => e.kind === "finished");
+        assert.equal(finished.outcome, "retried");
+        assert.equal(finished.error, "boom");
+        assert.equal(finished.nextAttemptAtMs, T0 + 1_000, "one base delay away");
+    });
+
+    test("a terminal failure reports dead with no next attempt", async () => {
+        const { events, harness: h } = recording();
+        await h.worker.enqueue(job("doomed", () => {
+            throw new PermanentJobError("cannot ever work");
+        }));
+        await h.worker.tick();
+
+        const finished = events.find(e => e.kind === "finished");
+        assert.equal(finished.outcome, "dead");
+        assert.equal(finished.error, "cannot ever work");
+        assert.equal(finished.nextAttemptAtMs, null);
+    });
+
+    test("a bad payload reports dead rather than going quiet", async () => {
+        const { events, harness: h } = recording();
+        await h.worker.enqueue(defineJob({
+            name: "strict",
+            parse: () => { throw new Error("realmId must be a string"); },
+            handler: () => { }
+        }), { realmId: 42 });
+        await h.worker.tick();
+
+        assert.equal(events.filter(e => e.kind === "started").length, 1);
+        assert.equal(events.find(e => e.kind === "finished").outcome, "dead");
+    });
+
+    test("an unregistered handler still reports a finished run", async () => {
+        const { events, harness: h } = recording({ claimOnlyRegisteredHandlers: false });
+        await h.worker.enqueueByName("missing");
+        await h.worker.tick();
+
+        const finished = events.find(e => e.kind === "finished");
+        assert.equal(finished.outcome, "dead");
+        assert.match(finished.error, /no handler registered/);
+    });
+
+    test("every tick is reported, even an empty one", async () => {
+        const { events, harness: h } = recording();
+        await h.worker.tick();
+
+        assert.deepEqual(events, [{ kind: "tick", claimed: 0 }]);
+    });
+
+    test("the retry sequence is reported attempt by attempt", async () => {
+        const { events, harness: h } = recording();
+        let attempts = 0;
+        const flaky = job("flaky", () => {
+            attempts += 1;
+            if (attempts < 3) throw new Error(`boom ${attempts}`);
+        });
+
+        await h.worker.enqueue(flaky, undefined, { maxAttempts: 3 });
+        await h.worker.tick();
+        h.clock.advance(1_000);
+        await h.worker.tick();
+        h.clock.advance(2_000);
+        await h.worker.tick();
+
+        assert.deepEqual(
+            events.filter(e => e.kind === "finished").map(e => [e.attempt, e.outcome]),
+            [[1, "retried"], [2, "retried"], [3, "succeeded"]]);
+    });
+
+    // Observing work must never be able to break it.
+    test("an observer that throws is reported and otherwise ignored", async () => {
+        const errors = [];
+        const { worker, store } = harness({
+            observer: {
+                runStarted: () => { throw new Error("observer is broken"); },
+                runFinished: () => { throw new Error("observer is broken"); },
+                tickFinished: () => { throw new Error("observer is broken"); }
+            },
+            onError: err => errors.push(err.message)
+        });
+
+        let runs = 0;
+        await worker.enqueue(job("quick", () => { runs += 1; }));
+        const result = await worker.tick();
+
+        assert.equal(runs, 1, "the job still ran");
+        assert.equal(result.succeeded, 1, "and the tick still reported it");
+        assert.equal(store.countByStatus(JobStatus.Succeeded), 1, "and it still settled");
+        assert.ok(errors.every(m => m === "observer is broken"));
+        assert.ok(errors.length >= 3, "each failing callback was reported");
+    });
+
+    test("a partial observer is fine", async () => {
+        const seen = [];
+        const { worker } = harness({ observer: { runFinished: e => seen.push(e.outcome) } });
+
+        await worker.enqueue(job("quick", () => { }));
+        await worker.tick();
+
+        assert.deepEqual(seen, ["succeeded"]);
+    });
+
+    test("no observer is fine", async () => {
+        const { worker } = harness();
+        await worker.enqueue(job("quick", () => { }));
+
+        assert.equal((await worker.tick()).succeeded, 1);
+    });
+});
+
 describe("notifiers", () => {
     const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 

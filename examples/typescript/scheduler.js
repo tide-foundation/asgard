@@ -109,7 +109,13 @@ async function runWorker() {
         ],
         concurrency: 2,
         pollIntervalMs: 100,
-        retry: { maxAttempts: 4, baseMs: 200, capMs: 5_000, multiplier: 2, jitter: "none" }
+        retry: { maxAttempts: 4, baseMs: 200, capMs: 5_000, multiplier: 2, jitter: "none" },
+
+        // Somewhere to hang a log line, a metric or a trace span.
+        observer: {
+            runFinished: ({ run, outcome, durationMs }) =>
+                console.log(`  [observer] ${run.handler} ${outcome} in ${durationMs}ms`)
+        }
     });
 
     await worker.enqueue(flaky);

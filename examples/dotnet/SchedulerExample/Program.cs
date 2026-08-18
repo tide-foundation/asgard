@@ -116,7 +116,10 @@ static async Task RunWorker()
 		Retry = new RetryPolicy
 		{
 			MaxAttempts = 4, BaseMs = 200, CapMs = 5_000, Multiplier = 2, Jitter = JitterMode.None
-		}
+		},
+
+		// Somewhere to hang a log line, a metric or a trace span.
+		Observer = new ConsoleObserver()
 	});
 
 	await worker.EnqueueAsync(flaky);
@@ -135,4 +138,11 @@ static async Task RunWorker()
 	{
 		Console.WriteLine($"  dead: {run.Handler} after {run.Attempt} attempt(s), {run.LastError}");
 	}
+}
+
+// Only overrides what it needs. The other methods keep their no-op defaults.
+file sealed class ConsoleObserver : IJobObserver
+{
+	public void RunFinished(RunFinishedEvent e) =>
+		Console.WriteLine($"  [observer] {e.Run.Handler} {e.Outcome} in {e.DurationMs}ms");
 }

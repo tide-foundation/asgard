@@ -9,6 +9,7 @@ import { HandlerRegistry, JobContext } from "./HandlerRegistry";
 import { JobDefinition, PayloadError } from "./JobDefinition";
 import { JobRun, JobRunRequest } from "./JobRun";
 import { JobNotifier } from "./JobNotifier";
+import { JobObserver, RunOutcome } from "./JobObserver";
 import { JobStore, JobStoreStats } from "./JobStore";
 import { MisfirePolicy } from "./MisfirePolicy";
 export { MisfirePolicy };
@@ -78,6 +79,8 @@ export interface WorkerOptions {
     // Optional. Lets a worker be woken when work arrives instead of waiting out
     // pollIntervalMs. Polling stays the floor either way.
     readonly notifier?: JobNotifier;
+    // Somewhere to hang a log line, a metric or a trace span. See JobObserver.
+    readonly observer?: JobObserver;
     readonly retention?: RetentionPolicy;
     readonly retry?: RetryPolicy;
     readonly random?: () => number;
@@ -120,6 +123,7 @@ export class Worker {
     private readonly heartbeatMs: number;
     private readonly claimOnlyRegisteredHandlers: boolean;
     private readonly notifier: JobNotifier | null;
+    private readonly observer: JobObserver | null;
     private readonly retention: RetentionPolicy | null;
     private readonly retry: RetryPolicy;
     private readonly random: () => number;
@@ -145,6 +149,7 @@ export class Worker {
         this.heartbeatMs = Math.max(1, options.heartbeatMs ?? Math.floor(this.leaseMs / 3));
         this.claimOnlyRegisteredHandlers = options.claimOnlyRegisteredHandlers ?? true;
         this.notifier = options.notifier ?? null;
+        this.observer = options.observer ?? null;
         this.retention = options.retention ?? null;
         this.retry = options.retry ?? DEFAULT_RETRY_POLICY;
         this.random = options.random ?? Math.random;
@@ -291,6 +296,7 @@ export class Worker {
     // clock and assert on each step instead of racing real timers.
     async tick(): Promise<TickResult> {
         const now = this.clock.nowMs();
+        const startedAt = Date.now();
 
         const reaped = await this.store.reapExpired(now);
         const purged = await this.purge(now);
@@ -311,7 +317,24 @@ export class Worker {
             else dead += 1;
         }
 
-        return { reaped, materialized, claimed: claimed.length, succeeded, retried, dead, purged };
+        const result = {
+            reaped, materialized, claimed: claimed.length, succeeded, retried, dead, purged
+        };
+
+        this.observe(o => o.tickFinished?.({ result, durationMs: Date.now() - startedAt }));
+        return result;
+    }
+
+    // Observing work must never be able to break it, so a callback that throws
+    // is reported and otherwise ignored.
+    private observe(emit: (observer: JobObserver) => void): void {
+        if (this.observer === null) return;
+
+        try {
+            emit(this.observer);
+        } catch (error) {
+            this.onError(error, null);
+        }
     }
 
     // Counts by status plus the age of the oldest waiting run, for feeding
@@ -472,9 +495,12 @@ export class Worker {
             // Retrying cannot help in this process. A durable multi process
             // deployment should instead claim only handlers it knows about.
             const at = this.clock.nowMs();
-            const error = `no handler registered for '${run.handler}'`;
-            await this.store.deadLetter(run.id, error, await this.chainFor(run, at), at);
-            this.onError(new Error(error), run);
+            const message = `no handler registered for '${run.handler}'`;
+            const error = new Error(message);
+
+            await this.store.deadLetter(run.id, message, await this.chainFor(run, at), at);
+            this.onError(error, run);
+            this.observe(o => o.runFinished?.({ run, outcome: "dead", durationMs: 0, error }));
             return "dead";
         }
 
@@ -486,6 +512,9 @@ export class Worker {
             heartbeat: () => this.store.heartbeat(run.id, this.clock.nowMs() + this.leaseMs)
         };
 
+        this.observe(o => o.runStarted?.({ run, atMs: this.clock.nowMs() }));
+        const startedAt = Date.now();
+
         let payload: unknown;
         try {
             // Validating on dequeue rather than on enqueue is what catches a
@@ -494,37 +523,51 @@ export class Worker {
             payload = job.parse === undefined ? run.payload : job.parse(run.payload);
         } catch (error) {
             // Retrying cannot change what is already stored.
-            return this.settleFailure(run, new PayloadError(job.name, error), true);
+            return this.settleFailure(run, new PayloadError(job.name, error), startedAt, true);
         }
 
         this.inFlight.add(run.id);
         try {
             await job.handler(payload, ctx);
         } catch (error) {
-            return this.settleFailure(run, error);
+            return this.settleFailure(run, error, startedAt);
         } finally {
             this.inFlight.delete(run.id);
         }
 
         const at = this.clock.nowMs();
         await this.store.complete(run.id, await this.chainFor(run, at), at);
+
+        this.observe(o => o.runFinished?.({
+            run, outcome: "succeeded", durationMs: Date.now() - startedAt
+        }));
         return "succeeded";
     }
 
     private async settleFailure(
-        run: JobRun, error: unknown, forcePermanent = false): Promise<"retried" | "dead"> {
+        run: JobRun, error: unknown, startedAt: number, forcePermanent = false
+    ): Promise<"retried" | "dead"> {
         const at = this.clock.nowMs();
         const message = error instanceof Error ? error.message : String(error);
         this.onError(error, run);
+
+        const finish = (outcome: RunOutcome, nextAttemptAtMs: number | null) =>
+            this.observe(o => o.runFinished?.({
+                run, outcome, error, nextAttemptAtMs, durationMs: Date.now() - startedAt
+            }));
 
         const permanent = forcePermanent || error instanceof PermanentJobError;
         if (!permanent && run.attempt < run.maxAttempts) {
             const delay = retryDelayMs(this.retry, run.attempt, this.random);
             await this.store.retry(run.id, message, at + delay, at);
+
+            finish("retried", at + delay);
             return "retried";
         }
 
         await this.store.deadLetter(run.id, message, await this.chainFor(run, at), at);
+
+        finish("dead", null);
         return "dead";
     }
 }

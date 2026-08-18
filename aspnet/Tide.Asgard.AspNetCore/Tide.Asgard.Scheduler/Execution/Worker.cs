@@ -119,6 +119,9 @@ public sealed record WorkerOptions
 	// PollIntervalMs. Polling stays the floor either way.
 	public IJobNotifier? Notifier { get; init; }
 
+	// Somewhere to hang a log line, a metric or a trace span. See IJobObserver.
+	public IJobObserver? Observer { get; init; }
+
 	public RetentionPolicy? Retention { get; init; }
 	public RetryPolicy Retry { get; init; } = RetryPolicy.Default;
 	public Func<double>? Random { get; init; }
@@ -148,6 +151,7 @@ public sealed class Worker : IAsyncDisposable
 	private readonly long _heartbeatMs;
 	private readonly bool _claimOnlyRegisteredHandlers;
 	private readonly IJobNotifier? _notifier;
+	private readonly IJobObserver? _observer;
 	private readonly RetentionPolicy? _retention;
 	private readonly RetryPolicy _retry;
 	private readonly Func<double> _random;
@@ -205,6 +209,7 @@ public sealed class Worker : IAsyncDisposable
 		_heartbeatMs = Math.Max(1, options.HeartbeatMs ?? _leaseMs / 3);
 		_claimOnlyRegisteredHandlers = options.ClaimOnlyRegisteredHandlers;
 		_notifier = options.Notifier;
+		_observer = options.Observer;
 		_retention = options.Retention;
 		_retry = options.Retry;
 		_random = options.Random ?? System.Random.Shared.NextDouble;
@@ -378,6 +383,7 @@ public sealed class Worker : IAsyncDisposable
 	public async Task<TickResult> TickAsync(CancellationToken ct = default)
 	{
 		var now = _clock.NowMs;
+		var startedAt = Environment.TickCount64;
 
 		var reaped = await _store.ReapExpiredAsync(now, ct);
 		var purged = await PurgeAsync(now, ct);
@@ -389,7 +395,7 @@ public sealed class Worker : IAsyncDisposable
 
 		var outcomes = await Task.WhenAll(claimed.Select(run => DispatchAsync(run, ct)));
 
-		return new TickResult(
+		var result = new TickResult(
 			reaped,
 			materialized,
 			claimed.Count,
@@ -397,6 +403,25 @@ public sealed class Worker : IAsyncDisposable
 			outcomes.Count(o => o == Outcome.Retried),
 			outcomes.Count(o => o == Outcome.Dead),
 			purged);
+
+		Observe(o => o.TickFinished(new TickFinishedEvent(result, Environment.TickCount64 - startedAt)));
+		return result;
+	}
+
+	// Observing work must never be able to break it, so a callback that throws is
+	// reported and otherwise ignored.
+	private void Observe(Action<IJobObserver> emit)
+	{
+		if (_observer is null) return;
+
+		try
+		{
+			emit(_observer);
+		}
+		catch (Exception e)
+		{
+			_onError(e, null);
+		}
 	}
 
 	// Counts by status plus the age of the oldest waiting run, for feeding
@@ -587,9 +612,12 @@ public sealed class Worker : IAsyncDisposable
 			// Retrying cannot help in this process. A durable multi process
 			// deployment should instead claim only handlers it knows about.
 			var at = _clock.NowMs;
-			var error = $"no handler registered for '{run.Handler}'";
-			await _store.DeadLetterAsync(run.Id, error, await ChainForAsync(run, at, ct), at, ct);
-			_onError(new InvalidOperationException(error), run);
+			var message = $"no handler registered for '{run.Handler}'";
+			var error = new InvalidOperationException(message);
+
+			await _store.DeadLetterAsync(run.Id, message, await ChainForAsync(run, at, ct), at, ct);
+			_onError(error, run);
+			Observe(o => o.RunFinished(new RunFinishedEvent(run, RunOutcome.Dead, 0, error)));
 			return Outcome.Dead;
 		}
 
@@ -602,6 +630,9 @@ public sealed class Worker : IAsyncDisposable
 			Heartbeat = () => _store.HeartbeatAsync(run.Id, _clock.NowMs + _leaseMs, ct)
 		};
 
+		Observe(o => o.RunStarted(new RunStartedEvent(run, _clock.NowMs)));
+		var startedAt = Environment.TickCount64;
+
 		object? payload;
 		try
 		{
@@ -613,7 +644,8 @@ public sealed class Worker : IAsyncDisposable
 		}
 		catch (Exception e)
 		{
-			return await SettleFailureAsync(run, new PayloadException(job.Name, e), ct, forcePermanent: true);
+			return await SettleFailureAsync(
+				run, new PayloadException(job.Name, e), startedAt, ct, forcePermanent: true);
 		}
 
 		lock (_inFlightGate) _inFlight.Add(run.Id);
@@ -623,7 +655,7 @@ public sealed class Worker : IAsyncDisposable
 		}
 		catch (Exception e)
 		{
-			return await SettleFailureAsync(run, e, ct);
+			return await SettleFailureAsync(run, e, startedAt, ct);
 		}
 		finally
 		{
@@ -632,23 +664,34 @@ public sealed class Worker : IAsyncDisposable
 
 		var settledAt = _clock.NowMs;
 		await _store.CompleteAsync(run.Id, await ChainForAsync(run, settledAt, ct), settledAt, ct);
+
+		Observe(o => o.RunFinished(new RunFinishedEvent(
+			run, RunOutcome.Succeeded, Environment.TickCount64 - startedAt)));
 		return Outcome.Succeeded;
 	}
 
 	private async Task<Outcome> SettleFailureAsync(
-		JobRun run, Exception error, CancellationToken ct, bool forcePermanent = false)
+		JobRun run, Exception error, long startedAt, CancellationToken ct, bool forcePermanent = false)
 	{
 		var at = _clock.NowMs;
 		_onError(error, run);
+
+		void Finish(RunOutcome outcome, long? nextAttemptAtMs) => Observe(o => o.RunFinished(
+			new RunFinishedEvent(
+				run, outcome, Environment.TickCount64 - startedAt, error, nextAttemptAtMs)));
 
 		if (!forcePermanent && error is not PermanentJobException && run.Attempt < run.MaxAttempts)
 		{
 			var delay = _retry.DelayMs(run.Attempt, _random);
 			await _store.RetryAsync(run.Id, error.Message, at + delay, at, ct);
+
+			Finish(RunOutcome.Retried, at + delay);
 			return Outcome.Retried;
 		}
 
 		await _store.DeadLetterAsync(run.Id, error.Message, await ChainForAsync(run, at, ct), at, ct);
+
+		Finish(RunOutcome.Dead, null);
 		return Outcome.Dead;
 	}
 

@@ -62,6 +62,7 @@ internal static class ExecutionTests
 		Retention(runner);
 		Stats(runner);
 		LeaseRenewal(runner);
+		Observers(runner);
 		Notifiers(runner);
 		Lifecycle(runner);
 	}
@@ -1058,6 +1059,199 @@ internal static class ExecutionTests
 			Assert.Equal(1, first.Materialized);
 			Assert.Equal(0, second.Materialized, "the idempotency key discarded the duplicate");
 			Assert.Equal(1, store.All().Count);
+		});
+	}
+
+	// Records what the worker reports, so a test can assert on the sequence.
+	private sealed class RecordingObserver : IJobObserver
+	{
+		public List<string> Events { get; } = [];
+
+		public void RunStarted(RunStartedEvent e) => Events.Add($"started:{e.Run.Id}:{e.Run.Handler}");
+
+		public void RunFinished(RunFinishedEvent e) => Events.Add(
+			$"finished:{e.Run.Id}:{e.Outcome}:{e.Run.Attempt}:" +
+			$"{e.Error?.Message ?? "none"}:{e.NextAttemptAtMs?.ToString() ?? "none"}");
+
+		public void TickFinished(TickFinishedEvent e) => Events.Add($"tick:{e.Result.Claimed}");
+	}
+
+	private sealed class BrokenObserver : IJobObserver
+	{
+		public void RunStarted(RunStartedEvent e) => throw new Exception("observer is broken");
+		public void RunFinished(RunFinishedEvent e) => throw new Exception("observer is broken");
+		public void TickFinished(TickFinishedEvent e) => throw new Exception("observer is broken");
+	}
+
+	// Only overrides one method, to prove the defaults hold.
+	private sealed class PartialObserver : IJobObserver
+	{
+		public List<RunOutcome> Outcomes { get; } = [];
+
+		public void RunFinished(RunFinishedEvent e) => Outcomes.Add(e.Outcome);
+	}
+
+	private static Harness NewHarness(IJobObserver observer, bool claimOnlyRegisteredHandlers = true)
+	{
+		var clock = new FakeClock(T0);
+		var store = new InMemoryJobStore();
+		var registry = new HandlerRegistry();
+		var worker = new Worker(new WorkerOptions
+		{
+			Store = store, Registry = registry, Clock = clock, Owner = "test",
+			Observer = observer, ClaimOnlyRegisteredHandlers = claimOnlyRegisteredHandlers,
+			Retry = NoJitter, Random = () => 0.5
+		});
+		return new Harness(clock, store, registry, worker);
+	}
+
+	private static void Observers(TestRunner runner)
+	{
+		runner.Suite("observers");
+
+		runner.TestAsync("a successful run reports started then finished", async () =>
+		{
+			var observer = new RecordingObserver();
+			var h = NewHarness(observer);
+
+			await h.Worker.EnqueueAsync(Job.Define("greet", _ => { }));
+			await h.Worker.TickAsync();
+
+			Assert.Sequence(
+				["started:run-1:greet", "finished:run-1:Succeeded:1:none:none"],
+				observer.Events.Where(e => !e.StartsWith("tick")));
+		});
+
+		runner.TestAsync("a retry reports the outcome and when the next attempt is due", async () =>
+		{
+			var observer = new RecordingObserver();
+			var h = NewHarness(observer);
+
+			await h.Worker.EnqueueAsync(
+				Job.Define("flaky", _ => throw new Exception("boom")), maxAttempts: 3);
+			await h.Worker.TickAsync();
+
+			Assert.Contains($"finished:run-1:Retried:1:boom:{T0 + 1_000}", string.Join("\n", observer.Events));
+		});
+
+		runner.TestAsync("a terminal failure reports dead with no next attempt", async () =>
+		{
+			var observer = new RecordingObserver();
+			var h = NewHarness(observer);
+
+			await h.Worker.EnqueueAsync(
+				Job.Define("doomed", _ => throw new PermanentJobException("cannot ever work")));
+			await h.Worker.TickAsync();
+
+			Assert.Contains("finished:run-1:Dead:1:cannot ever work:none", string.Join("\n", observer.Events));
+		});
+
+		runner.TestAsync("a bad payload reports dead rather than going quiet", async () =>
+		{
+			var observer = new RecordingObserver();
+			var h = NewHarness(observer);
+
+			await h.Worker.EnqueueAsync(
+				Job.Define<Realm>(
+					"strict", (_, _) => { },
+					parse: _ => throw new InvalidOperationException("realmId must be a string")),
+				new Realm("tide", 1));
+			await h.Worker.TickAsync();
+
+			Assert.Equal(1, observer.Events.Count(e => e.StartsWith("started")));
+			Assert.True(observer.Events.Any(e => e.Contains(":Dead:")), "expected a dead outcome");
+		});
+
+		runner.TestAsync("an unregistered handler still reports a finished run", async () =>
+		{
+			var observer = new RecordingObserver();
+			var h = NewHarness(observer, claimOnlyRegisteredHandlers: false);
+
+			await h.Worker.EnqueueByNameAsync("missing");
+			await h.Worker.TickAsync();
+
+			var finished = observer.Events.First(e => e.StartsWith("finished"));
+			Assert.Contains(":Dead:", finished);
+			Assert.Contains("no handler registered", finished);
+		});
+
+		runner.TestAsync("every tick is reported, even an empty one", async () =>
+		{
+			var observer = new RecordingObserver();
+			await NewHarness(observer).Worker.TickAsync();
+
+			Assert.Sequence(["tick:0"], observer.Events);
+		});
+
+		runner.TestAsync("the retry sequence is reported attempt by attempt", async () =>
+		{
+			var observer = new RecordingObserver();
+			var h = NewHarness(observer);
+			var attempts = 0;
+
+			var flaky = Job.Define("flaky", _ =>
+			{
+				attempts++;
+				if (attempts < 3) throw new Exception($"boom {attempts}");
+			});
+
+			await h.Worker.EnqueueAsync(flaky, maxAttempts: 3);
+			await h.Worker.TickAsync();
+			h.Clock.Advance(1_000);
+			await h.Worker.TickAsync();
+			h.Clock.Advance(2_000);
+			await h.Worker.TickAsync();
+
+			var outcomes = observer.Events
+				.Where(e => e.StartsWith("finished"))
+				.Select(e => string.Join(":", e.Split(':')[2..4]))
+				.ToList();
+
+			Assert.Sequence(["Retried:1", "Retried:2", "Succeeded:3"], outcomes);
+		});
+
+		// Observing work must never be able to break it.
+		runner.TestAsync("an observer that throws is reported and otherwise ignored", async () =>
+		{
+			var errors = new List<string>();
+			var clock = new FakeClock(T0);
+			var store = new InMemoryJobStore();
+			var runs = 0;
+
+			await using var worker = new Worker(new WorkerOptions
+			{
+				Store = store, Clock = clock, Owner = "test", Retry = NoJitter,
+				Observer = new BrokenObserver(),
+				OnError = (e, _) => errors.Add(e.Message)
+			});
+
+			await worker.EnqueueAsync(Job.Define("quick", _ => runs++));
+			var result = await worker.TickAsync();
+
+			Assert.Equal(1, runs, "the job still ran");
+			Assert.Equal(1, result.Succeeded, "and the tick still reported it");
+			Assert.Equal(1, store.CountByStatus(JobStatus.Succeeded), "and it still settled");
+			Assert.True(errors.Count >= 3, "each failing callback was reported");
+			Assert.True(errors.All(m => m == "observer is broken"), "and reported accurately");
+		});
+
+		runner.TestAsync("a partial observer is fine", async () =>
+		{
+			var observer = new PartialObserver();
+			var h = NewHarness(observer);
+
+			await h.Worker.EnqueueAsync(Job.Define("quick", _ => { }));
+			await h.Worker.TickAsync();
+
+			Assert.Sequence([RunOutcome.Succeeded], observer.Outcomes);
+		});
+
+		runner.TestAsync("no observer is fine", async () =>
+		{
+			var h = NewHarness();
+			await h.Worker.EnqueueAsync(Job.Define("quick", _ => { }));
+
+			Assert.Equal(1, (await h.Worker.TickAsync()).Succeeded);
 		});
 	}
 

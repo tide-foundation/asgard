@@ -28,6 +28,9 @@ export { MisfirePolicy } from "./execution/MisfirePolicy";
 export { ScheduleStore, ScheduleRecord, ScheduleUpsert } from "./execution/ScheduleStore";
 export { InMemoryScheduleStore } from "./execution/InMemoryScheduleStore";
 export { JobNotifier, InMemoryNotifier } from "./execution/JobNotifier";
+export {
+    JobObserver, RunOutcome, RunStartedEvent, RunFinishedEvent, TickFinishedEvent
+} from "./execution/JobObserver";
 export { PostgresNotifier, ListenClient, JOB_CHANNEL } from "./execution/PostgresNotifier";
 export { PostgresScheduleStore } from "./execution/PostgresScheduleStore";
 export { InMemoryJobStore } from "./execution/InMemoryJobStore";

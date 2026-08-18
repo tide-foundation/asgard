@@ -427,15 +427,57 @@ Set `afterMs` comfortably longer than the period of anything you schedule.
 Purging a run drops its idempotency key with it, so a schedule that later
 re-materializes the same occurrence would be free to enqueue it again.
 
-### Metrics
+### Metrics and per-run visibility
+
+`stats` gives you the totals:
 
 ```ts
-const { pending, leased, succeeded, dead, oldestPendingAgeMs } = await worker.stats();
+const { pending, leased, succeeded, dead, cancelled, oldestPendingAgeMs } = await worker.stats();
 ```
 
 Alert on `oldestPendingAgeMs`. Queue depth lies, because a large batch looks
 exactly like an outage, whereas a rising oldest age only ever means work is not
 being picked up.
+
+For per-run visibility, give the worker an observer. Every method is optional, so
+implement only what you need:
+
+```ts
+const worker = await createScheduler({
+    store,
+    jobs: [reconcileOrks],
+    observer: {
+        runStarted: ({ run }) => log.info({ runId: run.id, job: run.handler }, "run started"),
+        runFinished: ({ run, outcome, durationMs, error, nextAttemptAtMs }) =>
+            log.info({ runId: run.id, outcome, durationMs, err: error, nextAttemptAtMs }, "run finished"),
+        tickFinished: ({ result, durationMs }) => metrics.observe(result, durationMs)
+    }
+});
+```
+
+```csharp
+public sealed class LoggingObserver(ILogger logger) : IJobObserver
+{
+    // The other methods keep their no-op defaults.
+    public void RunFinished(RunFinishedEvent e) =>
+        logger.LogInformation("{Job} {Outcome} in {Duration}ms", e.Run.Handler, e.Outcome, e.DurationMs);
+}
+```
+
+Two deliberate choices here:
+
+- **Callbacks are synchronous.** Awaiting an observer would put your logging or
+  tracing on the critical path of every run, where a slow one quietly becomes a
+  throughput problem. Queue anything expensive inside the observer.
+- **A callback that throws cannot break the run.** It is reported through
+  `onError` and otherwise ignored, and there is a test asserting that a worker
+  with an observer throwing from every method still runs, settles and reports
+  its job.
+
+`runFinished` carries the outcome (`succeeded`, `retried` or `dead`), how long
+the handler took, the error when there was one, and when the next attempt is due
+for a retry. Correlate `runStarted` and `runFinished` on `run.id` to wrap a trace
+span around a run.
 
 ## Storing schedules
 
@@ -598,15 +640,15 @@ dotnet run --project examples/dotnet/SchedulerExample
 ## Tests
 
 ```bash
-npm test                                              # TypeScript, 214 tests
+npm test                                              # TypeScript, 224 tests
 
 cd aspnet/Tide.Asgard.AspNetCore
-dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 214 tests
+dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 224 tests
 ```
 
 The Postgres tests need a real database, because the two properties that matter,
 `SKIP LOCKED` and single statement atomicity, cannot be faked. Point them at a
-throwaway database and both suites grow to 266:
+throwaway database and both suites grow to 276:
 
 ```bash
 export SCHEDULER_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/scheduler_test
@@ -664,7 +706,7 @@ src/scheduler/                                  TypeScript
     Clock.ts  RetryPolicy.ts  JobRun.ts  JobStore.ts
     InMemoryJobStore.ts  PostgresJobStore.ts
     ScheduleStore.ts  InMemoryScheduleStore.ts  PostgresScheduleStore.ts
-    JobNotifier.ts  PostgresNotifier.ts
+    JobNotifier.ts  PostgresNotifier.ts  JobObserver.ts
     Migrations.ts  MisfirePolicy.ts  JobDefinition.ts
     HandlerRegistry.ts  Worker.ts  Scheduler.ts
 
@@ -676,7 +718,8 @@ aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
   Execution/
     Clock.cs  RetryPolicy.cs  JobRun.cs  IJobStore.cs
     InMemoryJobStore.cs  IScheduleStore.cs  InMemoryScheduleStore.cs
-    IJobNotifier.cs  JobDefinition.cs  HandlerRegistry.cs  Worker.cs
+    IJobNotifier.cs  IJobObserver.cs  JobDefinition.cs
+    HandlerRegistry.cs  Worker.cs
 
 aspnet/.../Tide.Asgard.Scheduler.Postgres/      .NET, needs Npgsql
   PostgresJobStore.cs  PostgresScheduleStore.cs
@@ -697,7 +740,8 @@ TypeScript needs no split, because the store there accepts any object with a
 1. **An HTTP surface for the admin methods.** They exist on the worker; exposing
    them is deliberately left to the host, since routing and authorisation belong
    to the application rather than the SDK.
-2. **Per-run observability hooks.** `onError` reports failures, and `stats`
-   reports totals, but there is nothing to hang a trace or a per-run log line
-   off. A handful of callbacks around dispatch would be the next thing worth
-   adding, and is the one gap a serious operator would notice.
+2. **Dependency injection and hosted service wiring for ASP.NET Core.** A
+   `services.AddAsgardScheduler(...)` and an `IHostedService` would save every
+   .NET host the same dozen lines. It is left out for now because the scheduler
+   core deliberately has no dependencies, so it belongs in a separate package
+   alongside the Postgres one rather than in the core.
