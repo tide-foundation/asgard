@@ -62,6 +62,7 @@ internal static class ExecutionTests
 		Retention(runner);
 		Stats(runner);
 		LeaseRenewal(runner);
+		Notifiers(runner);
 		Lifecycle(runner);
 	}
 
@@ -1058,6 +1059,161 @@ internal static class ExecutionTests
 			Assert.Equal(0, second.Materialized, "the idempotency key discarded the duplicate");
 			Assert.Equal(1, store.All().Count);
 		});
+	}
+
+	private static void Notifiers(TestRunner runner)
+	{
+		runner.Suite("notifiers");
+
+		runner.TestAsync("wait resolves as soon as it is notified", async () =>
+		{
+			var notifier = new InMemoryNotifier();
+			var started = Environment.TickCount64;
+
+			var waiting = notifier.WaitAsync(5_000);
+			await Task.Delay(20);
+			await notifier.NotifyAsync();
+			await waiting;
+
+			Assert.True(Environment.TickCount64 - started < 1_000,
+				"should not have waited out the timeout");
+		});
+
+		runner.TestAsync("wait gives up after the timeout when nothing happens", async () =>
+		{
+			var started = Environment.TickCount64;
+			await new InMemoryNotifier().WaitAsync(50);
+
+			Assert.True(Environment.TickCount64 - started >= 45, "should have waited");
+		});
+
+		runner.TestAsync("wait returns when the token is cancelled", async () =>
+		{
+			using var cts = new CancellationTokenSource();
+			var waiting = new InMemoryNotifier().WaitAsync(5_000, cts.Token);
+
+			await Task.Delay(20);
+			await cts.CancelAsync();
+			await waiting;
+		});
+
+		runner.TestAsync("an already cancelled token does not wait at all", async () =>
+		{
+			using var cts = new CancellationTokenSource();
+			await cts.CancelAsync();
+
+			var started = Environment.TickCount64;
+			await new InMemoryNotifier().WaitAsync(5_000, cts.Token);
+
+			Assert.True(Environment.TickCount64 - started < 1_000, "should have returned at once");
+		});
+
+		runner.TestAsync("notifying with nobody waiting is harmless", async () =>
+			await new InMemoryNotifier().NotifyAsync());
+
+		runner.TestAsync("every waiter is woken", async () =>
+		{
+			var notifier = new InMemoryNotifier();
+			var waiters = new[]
+			{
+				notifier.WaitAsync(5_000), notifier.WaitAsync(5_000), notifier.WaitAsync(5_000)
+			};
+
+			await Task.Delay(20);
+			await notifier.NotifyAsync();
+			await Task.WhenAll(waiters);
+		});
+
+		// Real clock: the point of a notifier is elapsed time, so there is
+		// nothing to assert on a fake one. Kept short, with a wide margin.
+		runner.TestAsync("a running worker picks up work without waiting out the poll interval", async () =>
+		{
+			var store = new InMemoryJobStore();
+			var notifier = new InMemoryNotifier();
+			long ranAt = 0;
+
+			var quick = Job.Define("quick", _ => Interlocked.Exchange(ref ranAt, Environment.TickCount64));
+
+			WorkerOptions Options(string owner) => new()
+			{
+				Store = store, Notifier = notifier, Jobs = [quick],
+				Owner = owner, PollIntervalMs = 5_000, Retry = NoJitter
+			};
+
+			await using var consumer = new Worker(Options("consumer"));
+			await using var producer = new Worker(Options("producer"));
+
+			consumer.Start();
+			await Task.Delay(100);
+
+			var enqueued = Environment.TickCount64;
+			await producer.EnqueueAsync(quick);
+			await Task.Delay(400);
+			await consumer.StopAsync();
+
+			Assert.True(ranAt != 0, "the job should have run");
+			Assert.True(ranAt - enqueued < 1_000, $"woken in {ranAt - enqueued}ms, not after 5s");
+		});
+
+		runner.TestAsync("without a notifier the same worker is still waiting", async () =>
+		{
+			var store = new InMemoryJobStore();
+			long ranAt = 0;
+
+			var quick = Job.Define("quick", _ => Interlocked.Exchange(ref ranAt, Environment.TickCount64));
+
+			WorkerOptions Options(string owner) => new()
+			{
+				Store = store, Jobs = [quick], Owner = owner,
+				PollIntervalMs = 5_000, Retry = NoJitter
+			};
+
+			await using var consumer = new Worker(Options("consumer"));
+			await using var producer = new Worker(Options("producer"));
+
+			consumer.Start();
+			await Task.Delay(100);
+
+			await producer.EnqueueAsync(quick);
+			await Task.Delay(400);
+			await consumer.StopAsync();
+
+			Assert.Equal(0L, ranAt, "polling alone should not have got to it yet");
+		});
+
+		runner.TestAsync("a notifier that throws costs latency, not correctness", async () =>
+		{
+			var store = new InMemoryJobStore();
+			var errors = new List<string>();
+			var runs = 0;
+
+			await using var worker = new Worker(new WorkerOptions
+			{
+				Store = store,
+				Notifier = new BrokenNotifier(),
+				PollIntervalMs = 50,
+				Retry = NoJitter,
+				OnError = (e, _) => { lock (errors) errors.Add(e.Message); }
+			});
+
+			await worker.EnqueueAsync(Job.Define("quick", _ => Interlocked.Increment(ref runs)));
+
+			worker.Start();
+			await Task.Delay(400);
+			await worker.StopAsync();
+
+			Assert.Equal(1, runs, "the job still ran");
+			Assert.True(errors.Count > 0, "and the failures were reported");
+		});
+	}
+
+	private sealed class BrokenNotifier : IJobNotifier
+	{
+		public Task NotifyAsync(CancellationToken ct = default)
+			=> throw new InvalidOperationException("notify is down");
+
+		public Task WaitAsync(long timeoutMs, CancellationToken ct = default)
+			=> throw new InvalidOperationException("wait is down");
 	}
 
 	private static void Lifecycle(TestRunner runner)

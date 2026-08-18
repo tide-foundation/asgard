@@ -17,6 +17,7 @@ const path = require("node:path");
 
 const {
     PostgresJobStore, PostgresScheduleStore, SCHEDULER_MIGRATIONS, migrate, appliedMigrations,
+    PostgresNotifier, JOB_CHANNEL,
     Worker, FakeClock, JobStatus, JitterMode, defineJob, parseSchedule, MisfirePolicy
 } = require(path.join(__dirname, "..", "..", "dist", "cjs", "scheduler", "index.js"));
 
@@ -589,6 +590,83 @@ describe("worker on postgres", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DA
     });
 });
 
+
+describe("postgres notifier", { skip: DATABASE_URL ? false : "SCHEDULER_TEST_DATABASE_URL is not set" }, () => {
+    let pool;
+    let listener;
+    let notifier;
+
+    before(async () => {
+        const { Client, Pool } = require("pg");
+        pool = new Pool({ connectionString: DATABASE_URL });
+
+        // LISTEN needs its own session, so this is a Client rather than a Pool.
+        listener = new Client({ connectionString: DATABASE_URL });
+        await listener.connect();
+
+        notifier = new PostgresNotifier(pool, listener);
+    });
+
+    after(async () => {
+        await listener.end();
+        await pool.end();
+    });
+
+    test("a notify on one connection wakes a wait on another", async () => {
+        const started = Date.now();
+        const waiting = notifier.wait(5_000);
+
+        // Give the LISTEN a moment to be registered before announcing.
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await notifier.notify();
+        await waiting;
+
+        assert.ok(Date.now() - started < 2_000, "should not have waited out the timeout");
+    });
+
+    test("a notify from a completely separate connection also wakes it", async () => {
+        const { Pool } = require("pg");
+        const other = new Pool({ connectionString: DATABASE_URL });
+
+        try {
+            const waiting = notifier.wait(5_000);
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // Standing in for another process entirely.
+            await other.query(`select pg_notify('${JOB_CHANNEL}', '')`);
+
+            const started = Date.now();
+            await waiting;
+            assert.ok(Date.now() - started < 2_000, "should have been woken");
+        } finally {
+            await other.end();
+        }
+    });
+
+    test("noise on another channel is ignored", async () => {
+        const started = Date.now();
+        await notifier.wait(150);
+        const idle = Date.now() - started;
+
+        await pool.query("select pg_notify('some_other_channel', '')");
+        assert.ok(idle >= 140, "an unrelated channel must not shorten the wait");
+    });
+
+    test("wait gives up after the timeout when nothing happens", async () => {
+        const started = Date.now();
+        await notifier.wait(150);
+
+        assert.ok(Date.now() - started >= 140);
+    });
+
+    test("wait returns when the signal aborts", async () => {
+        const controller = new AbortController();
+        const waiting = notifier.wait(5_000, controller.signal);
+
+        controller.abort();
+        await waiting;
+    });
+});
 
 // Last in the file on purpose: these drop and rebuild the tables, so nothing
 // after them can depend on the state they leave behind.

@@ -10,7 +10,7 @@ const path = require("node:path");
 const {
     FakeClock, InMemoryJobStore, HandlerRegistry, Worker, MisfirePolicy,
     JobStatus, JitterMode, retryDelayMs, shouldRetry, PermanentJobError,
-    defineJob, createScheduler, InMemoryScheduleStore
+    defineJob, createScheduler, InMemoryScheduleStore, InMemoryNotifier
 } = require(path.join(__dirname, "..", "..", "dist", "cjs", "scheduler", "index.js"));
 
 const T0 = Date.parse("2026-08-17T00:00:00Z");
@@ -854,6 +854,127 @@ describe("automatic lease renewal", () => {
         assert.equal(state.stolen, 1, "and another worker picked the run up");
 
         await ticking;
+    });
+});
+
+describe("notifiers", () => {
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    test("wait resolves as soon as it is notified", async () => {
+        const notifier = new InMemoryNotifier();
+        const started = Date.now();
+
+        const waiting = notifier.wait(5_000);
+        await notifier.notify();
+        await waiting;
+
+        assert.ok(Date.now() - started < 1_000, "should not have waited out the timeout");
+    });
+
+    test("wait gives up after the timeout when nothing happens", async () => {
+        const started = Date.now();
+        await new InMemoryNotifier().wait(50);
+
+        assert.ok(Date.now() - started >= 45, "should have waited");
+    });
+
+    test("wait returns when the signal aborts", async () => {
+        const controller = new AbortController();
+        const waiting = new InMemoryNotifier().wait(5_000, controller.signal);
+
+        controller.abort();
+        await waiting;
+    });
+
+    test("an already aborted signal does not wait at all", async () => {
+        const controller = new AbortController();
+        controller.abort();
+
+        const started = Date.now();
+        await new InMemoryNotifier().wait(5_000, controller.signal);
+
+        assert.ok(Date.now() - started < 1_000);
+    });
+
+    test("notifying with nobody waiting is harmless", async () => {
+        await new InMemoryNotifier().notify();
+    });
+
+    test("every waiter is woken", async () => {
+        const notifier = new InMemoryNotifier();
+        const waiters = [notifier.wait(5_000), notifier.wait(5_000), notifier.wait(5_000)];
+
+        await notifier.notify();
+        await Promise.all(waiters);
+    });
+
+    // Real clock: the point of a notifier is elapsed time, so there is nothing
+    // to assert on a fake one. Kept short, with a wide margin.
+    test("a running worker picks up work without waiting out the poll interval", async () => {
+        const store = new InMemoryJobStore();
+        const notifier = new InMemoryNotifier();
+        const ran = { at: null };
+
+        const quick = job("quick", () => { ran.at = Date.now(); });
+        const options = { store, notifier, jobs: [quick], pollIntervalMs: 5_000, retry: NO_JITTER };
+
+        const consumer = new Worker({ ...options, owner: "consumer" });
+        const producer = new Worker({ ...options, owner: "producer" });
+
+        consumer.start();
+        await wait(100);
+
+        const enqueued = Date.now();
+        await producer.enqueue(quick);
+        await wait(300);
+        await consumer.stop();
+
+        assert.notEqual(ran.at, null, "the job should have run");
+        assert.ok(ran.at - enqueued < 1_000, `woken in ${ran.at - enqueued}ms, not after 5s`);
+    });
+
+    test("without a notifier the same worker is still waiting", async () => {
+        const store = new InMemoryJobStore();
+        const ran = { at: null };
+
+        const quick = job("quick", () => { ran.at = Date.now(); });
+        const options = { store, jobs: [quick], pollIntervalMs: 5_000, retry: NO_JITTER };
+
+        const consumer = new Worker({ ...options, owner: "consumer" });
+        const producer = new Worker({ ...options, owner: "producer" });
+
+        consumer.start();
+        await wait(100);
+
+        await producer.enqueue(quick);
+        await wait(300);
+        await consumer.stop();
+
+        assert.equal(ran.at, null, "polling alone should not have got to it yet");
+    });
+
+    test("a notifier that throws costs latency, not correctness", async () => {
+        const store = new InMemoryJobStore();
+        const errors = [];
+        const broken = {
+            notify: async () => { throw new Error("notify is down"); },
+            wait: async () => { throw new Error("wait is down"); }
+        };
+
+        const worker = new Worker({
+            store, notifier: broken, pollIntervalMs: 50, retry: NO_JITTER,
+            onError: err => errors.push(err.message)
+        });
+
+        let runs = 0;
+        await worker.enqueue(job("quick", () => { runs += 1; }));
+
+        worker.start();
+        await wait(250);
+        await worker.stop();
+
+        assert.equal(runs, 1, "the job still ran");
+        assert.ok(errors.length > 0, "and the failures were reported");
     });
 });
 

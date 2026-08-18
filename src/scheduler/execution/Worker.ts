@@ -8,6 +8,7 @@ import { Clock, systemClock } from "./Clock";
 import { HandlerRegistry, JobContext } from "./HandlerRegistry";
 import { JobDefinition, PayloadError } from "./JobDefinition";
 import { JobRun, JobRunRequest } from "./JobRun";
+import { JobNotifier } from "./JobNotifier";
 import { JobStore, JobStoreStats } from "./JobStore";
 import { MisfirePolicy } from "./MisfirePolicy";
 export { MisfirePolicy };
@@ -74,6 +75,9 @@ export interface WorkerOptions {
     // mixed fleet a run is left for a process that can execute it. Turn off to
     // have this worker claim everything and dead letter what it cannot run.
     readonly claimOnlyRegisteredHandlers?: boolean;
+    // Optional. Lets a worker be woken when work arrives instead of waiting out
+    // pollIntervalMs. Polling stays the floor either way.
+    readonly notifier?: JobNotifier;
     readonly retention?: RetentionPolicy;
     readonly retry?: RetryPolicy;
     readonly random?: () => number;
@@ -115,6 +119,7 @@ export class Worker {
     private readonly leaseMs: number;
     private readonly heartbeatMs: number;
     private readonly claimOnlyRegisteredHandlers: boolean;
+    private readonly notifier: JobNotifier | null;
     private readonly retention: RetentionPolicy | null;
     private readonly retry: RetryPolicy;
     private readonly random: () => number;
@@ -139,6 +144,7 @@ export class Worker {
         this.leaseMs = Math.max(1, options.leaseMs ?? 30_000);
         this.heartbeatMs = Math.max(1, options.heartbeatMs ?? Math.floor(this.leaseMs / 3));
         this.claimOnlyRegisteredHandlers = options.claimOnlyRegisteredHandlers ?? true;
+        this.notifier = options.notifier ?? null;
         this.retention = options.retention ?? null;
         this.retry = options.retry ?? DEFAULT_RETRY_POLICY;
         this.random = options.random ?? Math.random;
@@ -240,13 +246,45 @@ export class Worker {
     async enqueueByName(
         handler: string, payload?: unknown, options?: EnqueueOptions
     ): Promise<JobRun | null> {
-        return this.store.enqueue({
+        const runAtMs = options?.runAtMs ?? this.clock.nowMs();
+
+        const run = await this.store.enqueue({
             handler,
             payload,
-            runAtMs: options?.runAtMs ?? this.clock.nowMs(),
+            runAtMs,
             maxAttempts: options?.maxAttempts ?? this.retry.maxAttempts,
             idempotencyKey: options?.idempotencyKey ?? null
         });
+
+        // Only worth waking anyone for work that is already due. Anything later
+        // will be found by the poll that covers it.
+        if (run !== null && runAtMs <= this.clock.nowMs()) await this.announce();
+        return run;
+    }
+
+    // Never throws. A worker that cannot announce new work still enqueued it.
+    private async announce(): Promise<void> {
+        if (this.notifier === null) return;
+
+        try {
+            await this.notifier.notify();
+        } catch (error) {
+            this.onError(error, null);
+        }
+    }
+
+    private async idle(): Promise<void> {
+        if (this.notifier === null) {
+            await this.clock.sleep(this.pollIntervalMs, this.stopController.signal);
+            return;
+        }
+
+        try {
+            await this.notifier.wait(this.pollIntervalMs, this.stopController.signal);
+        } catch (error) {
+            this.onError(error, null);
+            await this.clock.sleep(this.pollIntervalMs, this.stopController.signal);
+        }
     }
 
     // One pass of the loop. Exposed so tests can drive the worker with a fake
@@ -292,7 +330,7 @@ export class Worker {
                 } catch (error) {
                     this.onError(error, null);
                 }
-                await this.clock.sleep(this.pollIntervalMs, this.stopController.signal);
+                await this.idle();
             }
         })();
 
@@ -377,7 +415,10 @@ export class Worker {
                 // so a crash in between costs a repeated attempt rather than a
                 // lost occurrence.
                 const run = await this.store.enqueue(this.requestFor(record, fireAt));
-                if (run !== null) materialized += 1;
+                if (run === null) continue;
+
+                materialized += 1;
+                if (run.runAtMs <= nowMs) await this.announce();
             }
 
             // A chained schedule re-arms when its run settles, not here.

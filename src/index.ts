@@ -29,6 +29,10 @@ import { JobStore, JobStoreStats } from "./scheduler/execution/JobStore";
 import { MisfirePolicy } from "./scheduler/execution/MisfirePolicy";
 import { ScheduleStore, ScheduleRecord, ScheduleUpsert } from "./scheduler/execution/ScheduleStore";
 import { InMemoryScheduleStore } from "./scheduler/execution/InMemoryScheduleStore";
+import { JobNotifier, InMemoryNotifier } from "./scheduler/execution/JobNotifier";
+import {
+    PostgresNotifier, ListenClient, JOB_CHANNEL
+} from "./scheduler/execution/PostgresNotifier";
 import { PostgresScheduleStore } from "./scheduler/execution/PostgresScheduleStore";
 import { InMemoryJobStore } from "./scheduler/execution/InMemoryJobStore";
 import { PostgresJobStore, SqlClient } from "./scheduler/execution/PostgresJobStore";
@@ -64,3 +68,4 @@ export { createScheduler }
 export { Worker, WorkerOptions, TickResult, ScheduleDefinition, RetentionPolicy, EnqueueOptions }
 export { MisfirePolicy, ScheduleStore, ScheduleRecord, ScheduleUpsert }
 export { InMemoryScheduleStore, PostgresScheduleStore }
+export { JobNotifier, InMemoryNotifier, PostgresNotifier, ListenClient, JOB_CHANNEL }

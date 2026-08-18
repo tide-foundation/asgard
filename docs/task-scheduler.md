@@ -284,6 +284,50 @@ of contention.
 Payloads do not change, because the in memory store already normalises them the
 same way. That is the point of doing so.
 
+### Cutting the latency
+
+By default a worker finds new work by polling, so a job enqueued just after a
+poll waits most of an interval. That is fine to thousands of jobs a second, but
+it shows on work you want to happen now. Give the worker a notifier and it gets
+woken instead:
+
+```ts
+import { Client } from "pg";
+
+// LISTEN needs its own session, so this is a Client rather than a Pool.
+const listener = new Client({ connectionString });
+await listener.connect();
+
+const worker = await createScheduler({
+    store: new PostgresJobStore(pool),
+    notifier: new PostgresNotifier(pool, listener),
+    jobs: [reconcileOrks]
+});
+```
+
+```csharp
+await using var notifier = new PostgresNotifier(dataSource);
+
+await using var worker = await Worker.CreateAsync(new WorkerOptions
+{
+    Store = new PostgresJobStore(dataSource),
+    Notifier = notifier,
+    Jobs = [reconcileOrks]
+});
+```
+
+`NOTIFY` goes out through the pool when a worker enqueues something already due,
+including occurrences it materializes. Every worker listening on the channel
+wakes, ticks, and whoever wins the claim runs it.
+
+**Polling stays the floor.** A missed notification, a dropped connection, or a
+notifier that throws costs latency and never correctness, which is what makes
+this safe to add to a running system. There is a test for each: the same
+scenario with a broken notifier still runs the job, and reports the failure.
+
+`InMemoryNotifier` does the same thing within one process, which is what to use
+alongside `InMemoryJobStore`.
+
 ### What a tick does
 
 `start` loops over `tick`, and `tick` is public so tests can drive a worker with
@@ -298,7 +342,8 @@ dispatch    run each handler
 settle      succeeded, retried with backoff, or dead
 ```
 
-`start` additionally runs a lease renewal loop beside this one.
+`start` additionally runs a lease renewal loop beside this one, and waits on the
+notifier rather than the clock between passes when one is configured.
 
 ### Retries
 
@@ -553,15 +598,15 @@ dotnet run --project examples/dotnet/SchedulerExample
 ## Tests
 
 ```bash
-npm test                                              # TypeScript, 205 tests
+npm test                                              # TypeScript, 214 tests
 
 cd aspnet/Tide.Asgard.AspNetCore
-dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 205 tests
+dotnet run --project Tide.Asgard.Scheduler.Tests      # .NET, 214 tests
 ```
 
 The Postgres tests need a real database, because the two properties that matter,
 `SKIP LOCKED` and single statement atomicity, cannot be faked. Point them at a
-throwaway database and both suites grow to 252:
+throwaway database and both suites grow to 266:
 
 ```bash
 export SCHEDULER_TEST_DATABASE_URL=postgres://user:pass@localhost:5432/scheduler_test
@@ -619,6 +664,7 @@ src/scheduler/                                  TypeScript
     Clock.ts  RetryPolicy.ts  JobRun.ts  JobStore.ts
     InMemoryJobStore.ts  PostgresJobStore.ts
     ScheduleStore.ts  InMemoryScheduleStore.ts  PostgresScheduleStore.ts
+    JobNotifier.ts  PostgresNotifier.ts
     Migrations.ts  MisfirePolicy.ts  JobDefinition.ts
     HandlerRegistry.ts  Worker.ts  Scheduler.ts
 
@@ -630,10 +676,11 @@ aspnet/.../Tide.Asgard.Scheduler/               .NET, no dependencies
   Execution/
     Clock.cs  RetryPolicy.cs  JobRun.cs  IJobStore.cs
     InMemoryJobStore.cs  IScheduleStore.cs  InMemoryScheduleStore.cs
-    JobDefinition.cs  HandlerRegistry.cs  Worker.cs
+    IJobNotifier.cs  JobDefinition.cs  HandlerRegistry.cs  Worker.cs
 
 aspnet/.../Tide.Asgard.Scheduler.Postgres/      .NET, needs Npgsql
-  PostgresJobStore.cs  PostgresScheduleStore.cs  SchedulerMigrations.cs
+  PostgresJobStore.cs  PostgresScheduleStore.cs
+  PostgresNotifier.cs  SchedulerMigrations.cs
 
 sql/migrations/*.sql                            canonical DDL, append only
 ```
@@ -647,9 +694,10 @@ TypeScript needs no split, because the store there accepts any object with a
 
 ## Not built yet
 
-1. **Notify instead of poll.** Polling every second is fine to thousands of jobs
-   a second. `LISTEN`/`NOTIFY` on insert would cut latency without raising the
-   poll rate, but it is an optimisation rather than a gap.
-3. **An HTTP surface for the admin methods.** They exist on the worker; exposing
+1. **An HTTP surface for the admin methods.** They exist on the worker; exposing
    them is deliberately left to the host, since routing and authorisation belong
    to the application rather than the SDK.
+2. **Per-run observability hooks.** `onError` reports failures, and `stats`
+   reports totals, but there is nothing to hang a trace or a per-run log line
+   off. A handful of callbacks around dispatch would be the next thing worth
+   adding, and is the one gap a serious operator would notice.

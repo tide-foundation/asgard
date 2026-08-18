@@ -91,6 +91,7 @@ internal static class PostgresTests
 		Store(runner, store);
 		Schedules(runner, new PostgresScheduleStore(db));
 		WorkerOnPostgres(runner, store);
+		Notifier(runner, db);
 		Migrating(runner, db);
 	}
 
@@ -667,6 +668,86 @@ internal static class PostgresTests
 			Retry = NoJitter,
 			Random = () => 0.5
 		});
+
+	private static void Notifier(TestRunner runner, NpgsqlDataSource db)
+	{
+		runner.Suite("postgres notifier");
+
+		runner.TestAsync("a notify on one connection wakes a wait on another", async () =>
+		{
+			await using var notifier = new PostgresNotifier(db);
+
+			// Get the LISTEN registered before announcing.
+			var waiting = notifier.WaitAsync(5_000);
+			await Task.Delay(200);
+
+			var started = Environment.TickCount64;
+			await notifier.NotifyAsync();
+			await waiting;
+
+			Assert.True(Environment.TickCount64 - started < 2_000,
+				"should not have waited out the timeout");
+		});
+
+		runner.TestAsync("a notify from a completely separate connection also wakes it", async () =>
+		{
+			await using var notifier = new PostgresNotifier(db);
+
+			var waiting = notifier.WaitAsync(5_000);
+			await Task.Delay(200);
+
+			// Standing in for another process entirely.
+			await using (var other = db.CreateCommand(
+				$"select pg_notify('{PostgresNotifier.JobChannel}', '')"))
+			{
+				await other.ExecuteNonQueryAsync();
+			}
+
+			var started = Environment.TickCount64;
+			await waiting;
+			Assert.True(Environment.TickCount64 - started < 2_000, "should have been woken");
+		});
+
+		runner.TestAsync("noise on another channel is ignored", async () =>
+		{
+			await using var notifier = new PostgresNotifier(db);
+
+			var started = Environment.TickCount64;
+			var waiting = notifier.WaitAsync(400);
+			await Task.Delay(100);
+
+			await using (var other = db.CreateCommand("select pg_notify('some_other_channel', '')"))
+			{
+				await other.ExecuteNonQueryAsync();
+			}
+
+			await waiting;
+			Assert.True(Environment.TickCount64 - started >= 380,
+				"an unrelated channel must not shorten the wait");
+		});
+
+		runner.TestAsync("wait gives up after the timeout when nothing happens", async () =>
+		{
+			await using var notifier = new PostgresNotifier(db);
+
+			var started = Environment.TickCount64;
+			await notifier.WaitAsync(300);
+
+			Assert.True(Environment.TickCount64 - started >= 280, "should have waited");
+		});
+
+		runner.TestAsync("wait returns when the token is cancelled", async () =>
+		{
+			await using var notifier = new PostgresNotifier(db);
+			using var cts = new CancellationTokenSource();
+
+			var waiting = notifier.WaitAsync(5_000, cts.Token);
+			await Task.Delay(100);
+
+			await cts.CancelAsync();
+			await waiting;
+		});
+	}
 
 	// Last on purpose: these drop and rebuild the tables, so nothing after them
 	// can depend on the state they leave behind.

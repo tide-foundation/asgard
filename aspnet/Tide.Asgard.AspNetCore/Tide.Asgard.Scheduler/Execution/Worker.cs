@@ -115,6 +115,10 @@ public sealed record WorkerOptions
 	// have this worker claim everything and dead letter what it cannot run.
 	public bool ClaimOnlyRegisteredHandlers { get; init; } = true;
 
+	// Optional. Lets a worker be woken when work arrives instead of waiting out
+	// PollIntervalMs. Polling stays the floor either way.
+	public IJobNotifier? Notifier { get; init; }
+
 	public RetentionPolicy? Retention { get; init; }
 	public RetryPolicy Retry { get; init; } = RetryPolicy.Default;
 	public Func<double>? Random { get; init; }
@@ -143,6 +147,7 @@ public sealed class Worker : IAsyncDisposable
 	private readonly long _leaseMs;
 	private readonly long _heartbeatMs;
 	private readonly bool _claimOnlyRegisteredHandlers;
+	private readonly IJobNotifier? _notifier;
 	private readonly RetentionPolicy? _retention;
 	private readonly RetryPolicy _retry;
 	private readonly Func<double> _random;
@@ -199,6 +204,7 @@ public sealed class Worker : IAsyncDisposable
 		_leaseMs = Math.Max(1, options.LeaseMs);
 		_heartbeatMs = Math.Max(1, options.HeartbeatMs ?? _leaseMs / 3);
 		_claimOnlyRegisteredHandlers = options.ClaimOnlyRegisteredHandlers;
+		_notifier = options.Notifier;
 		_retention = options.Retention;
 		_retry = options.Retry;
 		_random = options.Random ?? System.Random.Shared.NextDouble;
@@ -308,21 +314,64 @@ public sealed class Worker : IAsyncDisposable
 
 	// Escape hatch for queueing a job whose definition is not to hand, for
 	// example from an admin endpoint that takes a name off a request.
-	public Task<JobRun?> EnqueueByNameAsync(
+	public async Task<JobRun?> EnqueueByNameAsync(
 		string handler,
 		object? payload = null,
 		long? runAtMs = null,
 		int? maxAttempts = null,
 		string? idempotencyKey = null,
 		CancellationToken ct = default)
-		=> _store.EnqueueAsync(new JobRunRequest
+	{
+		var at = runAtMs ?? _clock.NowMs;
+
+		var run = await _store.EnqueueAsync(new JobRunRequest
 		{
 			Handler = handler,
 			Payload = payload,
-			RunAtMs = runAtMs ?? _clock.NowMs,
+			RunAtMs = at,
 			MaxAttempts = maxAttempts ?? _retry.MaxAttempts,
 			IdempotencyKey = idempotencyKey
 		}, ct);
+
+		// Only worth waking anyone for work that is already due. Anything later
+		// will be found by the poll that covers it.
+		if (run is not null && at <= _clock.NowMs) await AnnounceAsync(ct);
+		return run;
+	}
+
+	// Never throws. A worker that cannot announce new work still enqueued it.
+	private async Task AnnounceAsync(CancellationToken ct)
+	{
+		if (_notifier is null) return;
+
+		try
+		{
+			await _notifier.NotifyAsync(ct);
+		}
+		catch (Exception e)
+		{
+			_onError(e, null);
+		}
+	}
+
+	private async Task IdleAsync()
+	{
+		if (_notifier is null)
+		{
+			await _clock.Delay(_pollIntervalMs, _stop.Token);
+			return;
+		}
+
+		try
+		{
+			await _notifier.WaitAsync(_pollIntervalMs, _stop.Token);
+		}
+		catch (Exception e)
+		{
+			_onError(e, null);
+			await _clock.Delay(_pollIntervalMs, _stop.Token);
+		}
+	}
 
 	// One pass of the loop. Exposed so tests can drive the worker with a fake
 	// clock and assert on each step instead of racing real timers.
@@ -371,7 +420,7 @@ public sealed class Worker : IAsyncDisposable
 				{
 					_onError(e, null);
 				}
-				await _clock.Delay(_pollIntervalMs, _stop.Token);
+				await IdleAsync();
 			}
 		});
 
@@ -477,7 +526,11 @@ public sealed class Worker : IAsyncDisposable
 				// Enqueue before advancing. The key makes the insert idempotent,
 				// so a crash in between costs a repeated attempt rather than a
 				// lost occurrence.
-				if (await _store.EnqueueAsync(RequestFor(record, fireAt), ct) is not null) materialized++;
+				var run = await _store.EnqueueAsync(RequestFor(record, fireAt), ct);
+				if (run is null) continue;
+
+				materialized++;
+				if (run.RunAtMs <= nowMs) await AnnounceAsync(ct);
 			}
 
 			// A chained schedule re-arms when its run settles, not here.
