@@ -11,7 +11,9 @@ public enum AsgardErrorCode
 	InvalidDoken = 2,
 	DPoPDelegationProofNotFound = 3,
 	SessionKeyApprovalNotFound = 4,
-	ResourceIdentityNotRegistered = 5
+	ResourceIdentityNotRegistered = 5,
+	ResourceCertificateRevoked = 6,
+	ResourceCertificateClientMismatch = 7
 
 }
 public class AsgardException : Exception
@@ -53,6 +55,8 @@ public class AsgardException : Exception
 	{
 		AsgardErrorCode.DokenNotFound => "Doken not found",
 		AsgardErrorCode.InvalidDoken => "Invalid Doken",
+		AsgardErrorCode.ResourceCertificateRevoked => "Tidecloak has revoked this resource's certificate, so it can no longer authenticate. Enroll the resource again to get a new one.",
+		AsgardErrorCode.ResourceCertificateClientMismatch => "This resource's certificate was issued for a different client. Check that you are using the correct client certificate in relation to your adaptor config",
 		AsgardErrorCode.ResourceIdentityNotRegistered => "This resource has no approved Tide resource identity yet, so it cannot authenticate to Tidecloak. Approve its certificate request in Tidecloak - enrollment is retried every minute and needs no restart.",
 		_ => "Unknown error",
 	};
