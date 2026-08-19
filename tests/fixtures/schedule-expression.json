@@ -1,0 +1,273 @@
+{
+  "comment": "Shared conformance fixtures for the schedule expression subsystem. Both the TypeScript and .NET implementations run this file. A disagreement is a bug in one binding, not a difference of opinion. Instants are ISO 8601 UTC. A null entry in expect means the schedule never fires again.",
+
+  "sequences": [
+    {
+      "name": "daily at a fixed hour",
+      "expr": "on hour=3",
+      "after": "2026-08-17T04:00:00Z",
+      "expect": ["2026-08-18T03:00:00Z", "2026-08-19T03:00:00Z"]
+    },
+    {
+      "name": "fires on the same day when the time has not passed",
+      "expr": "on hour=3",
+      "after": "2026-08-17T02:59:59Z",
+      "expect": ["2026-08-17T03:00:00Z"]
+    },
+    {
+      "name": "step values on the minute grid",
+      "expr": "on minute=*/15",
+      "after": "2026-08-17T04:07:00Z",
+      "expect": [
+        "2026-08-17T04:15:00Z",
+        "2026-08-17T04:30:00Z",
+        "2026-08-17T04:45:00Z",
+        "2026-08-17T05:00:00Z"
+      ]
+    },
+    {
+      "name": "bare value with a step runs to the field maximum",
+      "expr": "on minute=10/15",
+      "after": "2026-08-17T04:00:00Z",
+      "expect": [
+        "2026-08-17T04:10:00Z",
+        "2026-08-17T04:25:00Z",
+        "2026-08-17T04:40:00Z",
+        "2026-08-17T04:55:00Z",
+        "2026-08-17T05:10:00Z"
+      ]
+    },
+    {
+      "name": "hour range on weekdays skips the weekend",
+      "expr": "on hour=9-17 minute=0 dow=mon-fri",
+      "after": "2026-08-14T16:30:00Z",
+      "expect": [
+        "2026-08-14T17:00:00Z",
+        "2026-08-17T09:00:00Z",
+        "2026-08-17T10:00:00Z"
+      ]
+    },
+    {
+      "name": "named weekday list",
+      "expr": "on dow=mon,wed,fri hour=9 minute=30",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": [
+        "2026-08-17T09:30:00Z",
+        "2026-08-19T09:30:00Z",
+        "2026-08-21T09:30:00Z"
+      ]
+    },
+    {
+      "name": "monthly on a fixed day",
+      "expr": "on day=1 hour=0 minute=15",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-09-01T00:15:00Z", "2026-10-01T00:15:00Z"]
+    },
+    {
+      "name": "day=last tracks varying month length",
+      "expr": "on day=last hour=23 minute=55",
+      "after": "2026-01-05T00:00:00Z",
+      "expect": [
+        "2026-01-31T23:55:00Z",
+        "2026-02-28T23:55:00Z",
+        "2026-03-31T23:55:00Z"
+      ]
+    },
+    {
+      "name": "nth weekday of the month",
+      "expr": "on nth=2 dow=tue hour=10",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": [
+        "2026-09-08T10:00:00Z",
+        "2026-10-13T10:00:00Z",
+        "2026-11-10T10:00:00Z"
+      ]
+    },
+    {
+      "name": "last weekday of the month",
+      "expr": "on nth=last dow=fri hour=10",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-08-28T10:00:00Z", "2026-09-25T10:00:00Z"]
+    },
+    {
+      "name": "defaulting rule collapses everything finer than month",
+      "expr": "on month=7",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2027-07-01T00:00:00Z"]
+    },
+    {
+      "name": "defaulting rule collapses everything finer than day",
+      "expr": "on day=15",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-09-15T00:00:00Z", "2026-10-15T00:00:00Z"]
+    },
+    {
+      "name": "second granularity",
+      "expr": "on hour=0 minute=0 second=*/20",
+      "after": "2026-08-17T00:00:05Z",
+      "expect": [
+        "2026-08-17T00:00:20Z",
+        "2026-08-17T00:00:40Z",
+        "2026-08-18T00:00:00Z"
+      ]
+    },
+    {
+      "name": "a calendar that can never match returns null",
+      "expr": "on month=2 day=30",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": [null]
+    },
+    {
+      "name": "time literal is shorthand for hour and minute",
+      "expr": "on 09:30",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-08-17T09:30:00Z", "2026-08-18T09:30:00Z"]
+    },
+    {
+      "name": "time literal with seconds",
+      "expr": "on 09:30:15",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-08-17T09:30:15Z", "2026-08-18T09:30:15Z"]
+    },
+    {
+      "name": "time literal combines with other fields",
+      "expr": "on 09:30 dow=mon,wed,fri",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-08-17T09:30:00Z", "2026-08-19T09:30:00Z", "2026-08-21T09:30:00Z"]
+    },
+    {
+      "name": "leap day fires only in leap years",
+      "expr": "on day=29 month=2",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2028-02-29T00:00:00Z", "2032-02-29T00:00:00Z"]
+    },
+    {
+      "name": "leap day across a century that skips one",
+      "expr": "on day=29 month=2",
+      "after": "2096-03-01T00:00:00Z",
+      "expect": ["2104-02-29T00:00:00Z"]
+    },
+    {
+      "name": "day=31 skips months that are too short",
+      "expr": "on day=31",
+      "after": "2026-01-31T12:00:00Z",
+      "expect": ["2026-03-31T00:00:00Z", "2026-05-31T00:00:00Z"]
+    },
+    {
+      "name": "day=last in february tracks the leap year",
+      "expr": "on day=last month=2",
+      "after": "2027-03-01T00:00:00Z",
+      "expect": ["2028-02-29T00:00:00Z", "2029-02-28T00:00:00Z"]
+    },
+    {
+      "name": "fifth weekday occurrence is rare but reachable",
+      "expr": "on nth=5 dow=fri month=2",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2036-02-29T00:00:00Z"]
+    },
+    {
+      "name": "timezone with no transition in range",
+      "expr": "on hour=9 minute=30 dow=mon,wed,fri tz=Australia/Sydney",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": [
+        "2026-08-18T23:30:00Z",
+        "2026-08-20T23:30:00Z",
+        "2026-08-23T23:30:00Z"
+      ]
+    },
+    {
+      "name": "spring forward gap fires at the gap end by default",
+      "expr": "on hour=2 minute=30 tz=Australia/Sydney",
+      "after": "2026-10-03T00:00:00Z",
+      "expect": ["2026-10-03T16:00:00Z", "2026-10-04T15:30:00Z"]
+    },
+    {
+      "name": "spring forward gap can be skipped instead",
+      "expr": "on hour=2 minute=30 dstgap=skip tz=Australia/Sydney",
+      "after": "2026-10-03T00:00:00Z",
+      "expect": ["2026-10-04T15:30:00Z", "2026-10-05T15:30:00Z"]
+    },
+    {
+      "name": "fall back overlap uses the earlier instant by default",
+      "expr": "on hour=2 minute=30 tz=Australia/Sydney",
+      "after": "2026-04-04T00:00:00Z",
+      "expect": ["2026-04-04T15:30:00Z", "2026-04-05T16:30:00Z"]
+    },
+    {
+      "name": "fall back overlap can use the later instant",
+      "expr": "on hour=2 minute=30 dstfold=fire_last tz=Australia/Sydney",
+      "after": "2026-04-04T00:00:00Z",
+      "expect": ["2026-04-04T16:30:00Z", "2026-04-05T16:30:00Z"]
+    },
+    {
+      "name": "half hour dst shift",
+      "expr": "on hour=2 minute=15 tz=Australia/Lord_Howe",
+      "after": "2026-10-03T00:00:00Z",
+      "expect": ["2026-10-03T15:30:00Z", "2026-10-04T15:15:00Z"]
+    },
+    {
+      "name": "northern hemisphere spring forward",
+      "expr": "on hour=2 minute=30 tz=America/New_York",
+      "after": "2026-03-07T00:00:00Z",
+      "expect": ["2026-03-07T07:30:00Z", "2026-03-08T07:00:00Z"]
+    },
+    {
+      "name": "northern hemisphere fall back",
+      "expr": "on hour=1 minute=30 tz=America/New_York",
+      "after": "2026-10-31T00:00:00Z",
+      "expect": ["2026-10-31T05:30:00Z", "2026-11-01T05:30:00Z"]
+    },
+    {
+      "name": "fixed delay interval measures from the previous instant",
+      "expr": "every 30s",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-08-17T00:00:30Z", "2026-08-17T00:01:00Z"]
+    },
+    {
+      "name": "compound duration literal",
+      "expr": "every 1h30m",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-08-17T01:30:00Z", "2026-08-17T03:00:00Z"]
+    },
+    {
+      "name": "anchored interval snaps to the grid",
+      "expr": "every 15m from 2026-01-01T00:00:00Z",
+      "after": "2026-08-17T04:07:00Z",
+      "expect": ["2026-08-17T04:15:00Z", "2026-08-17T04:30:00Z"]
+    },
+    {
+      "name": "one shot fires once and never again",
+      "expr": "at 2026-09-01T03:00:00Z",
+      "after": "2026-08-17T00:00:00Z",
+      "expect": ["2026-09-01T03:00:00Z", null]
+    }
+  ],
+
+  "errors": [
+    { "name": "unknown leader", "expr": "weekly hour=3", "code": "E_UNKNOWN_LEADER", "offset": 0 },
+    { "name": "empty expression", "expr": "", "code": "E_EMPTY", "offset": 0 },
+    { "name": "on with no fields", "expr": "on", "code": "E_EMPTY", "offset": 0 },
+    { "name": "unknown field", "expr": "on foo=1", "code": "E_UNKNOWN_FIELD", "offset": 3 },
+    { "name": "field without equals", "expr": "on hour", "code": "E_UNKNOWN_FIELD", "offset": 3 },
+    { "name": "field with no value", "expr": "on hour=", "code": "E_MISSING_VALUE", "offset": 8 },
+    { "name": "duplicate field", "expr": "on hour=3 hour=4", "code": "E_DUPLICATE_FIELD", "offset": 10 },
+    { "name": "value out of range", "expr": "on hour=25", "code": "E_VALUE_RANGE", "offset": 8 },
+    { "name": "unparseable value", "expr": "on hour=noon", "code": "E_BAD_VALUE", "offset": 8 },
+    { "name": "empty list entry", "expr": "on minute=,5", "code": "E_BAD_VALUE", "offset": 10 },
+    { "name": "zero step", "expr": "on hour=*/0", "code": "E_BAD_STEP", "offset": 10 },
+    { "name": "non numeric step", "expr": "on hour=*/x", "code": "E_BAD_STEP", "offset": 10 },
+    { "name": "reversed range", "expr": "on hour=5-2", "code": "E_BAD_RANGE", "offset": 8 },
+    { "name": "day and dow both restricted", "expr": "on day=1 dow=mon", "code": "E_DAY_AMBIGUOUS", "offset": 3 },
+    { "name": "nth without dow", "expr": "on nth=2 hour=10", "code": "E_NTH_WITHOUT_DOW", "offset": 3 },
+    { "name": "nth out of range", "expr": "on nth=9 dow=tue", "code": "E_VALUE_RANGE", "offset": 7 },
+    { "name": "unknown timezone", "expr": "on tz=Mars/Olympus", "code": "E_UNKNOWN_TIMEZONE", "offset": 6 },
+    { "name": "unknown duration unit", "expr": "every 5x", "code": "E_BAD_DURATION", "offset": 7 },
+    { "name": "duration units out of order", "expr": "every 30m1h", "code": "E_BAD_DURATION", "offset": 10 },
+    { "name": "bad instant", "expr": "at nonsense", "code": "E_BAD_INSTANT", "offset": 3 },
+    { "name": "trailing tokens", "expr": "at 2026-09-01T03:00:00Z extra", "code": "E_TRAILING", "offset": 24 },
+    { "name": "time literal out of range", "expr": "on 25:00", "code": "E_VALUE_RANGE", "offset": 3 },
+    { "name": "time literal with a bad segment", "expr": "on 09:xx", "code": "E_BAD_VALUE", "offset": 6 },
+    { "name": "time literal with too many segments", "expr": "on 09:30:15:20", "code": "E_BAD_VALUE", "offset": 3 },
+    { "name": "time literal colliding with an explicit field", "expr": "on 09:30 hour=3", "code": "E_DUPLICATE_FIELD", "offset": 9 }
+  ]
+}

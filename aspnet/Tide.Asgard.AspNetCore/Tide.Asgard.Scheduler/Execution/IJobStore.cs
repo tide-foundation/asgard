@@ -1,0 +1,90 @@
+// Copyright (c) Tide Foundation Limited. All rights reserved.
+// Licensed under the Tide Community Open Code License. See LICENSE in the project root.
+
+namespace Tide.Asgard.Scheduler.Execution;
+
+// OldestPendingAgeMs is the age of the oldest run that is due and still waiting.
+// This is the number worth alerting on: queue depth lies, because a large batch
+// looks exactly like an outage, whereas a rising oldest age only ever means work
+// is not being picked up.
+public sealed record JobStoreStats(
+	int Pending, int Leased, int Succeeded, int Dead, int Cancelled, long OldestPendingAgeMs);
+
+// Implemented by stores that own their tables. Kept separate from IJobStore so
+// the contract does not carry something only durable implementations need.
+public interface ISchemaAwareJobStore
+{
+	Task EnsureSchemaAsync(CancellationToken ct = default);
+}
+
+// The seam between the scheduler and whatever database the host already uses.
+// Implementing this is the only work needed to make the scheduler durable, and
+// it is why the scheduler itself has no database dependency.
+//
+// The execution contract is at-least-once. A worker can die after a side effect
+// and before its settle call, so handlers must be idempotent. No store can fix
+// that, it is a property of running work outside the transaction that records it.
+public interface IJobStore
+{
+	// Returns null when IdempotencyKey is already present, which is how repeat
+	// materialization of the same occurrence is discarded.
+	Task<JobRun?> EnqueueAsync(JobRunRequest request, CancellationToken ct = default);
+
+	// Atomically hands at most max due runs to one owner and extends their
+	// leases. A durable implementation does this in a single statement, for
+	// Postgres an UPDATE over a SELECT ... FOR UPDATE SKIP LOCKED, so that
+	// concurrent workers never claim the same run.
+	//
+	// When handlers is given, only runs for those handler names are claimed. A
+	// worker passes what it has registered, so in a mixed fleet a run is left for
+	// a process that can actually execute it rather than being claimed and failed
+	// by one that cannot.
+	Task<IReadOnlyList<JobRun>> ClaimDueAsync(
+		string owner, long nowMs, long leaseMs, int max,
+		IReadOnlyCollection<string>? handlers = null, CancellationToken ct = default);
+
+	// Extends a lease while a handler is still working. Returns false when the
+	// lease was already lost, which means the reaper has handed the run to
+	// someone else and this worker should stop.
+	Task<bool> HeartbeatAsync(string runId, long leaseUntilMs, CancellationToken ct = default);
+
+	// Settles a run as succeeded and enqueues its successor in the same commit.
+	// Splitting these is the classic way to lose a recurring schedule forever:
+	// a crash in between leaves nothing scheduled and nothing to notice.
+	Task CompleteAsync(string runId, JobRunRequest? next, long nowMs, CancellationToken ct = default);
+
+	// Returns a run to Pending with a later RunAtMs after a failed attempt.
+	Task RetryAsync(string runId, string error, long runAtMs, long nowMs, CancellationToken ct = default);
+
+	// Terminal failure. Takes a successor for the same reason CompleteAsync does:
+	// a recurring schedule must survive a run that could not be salvaged, or one
+	// bad night stops the job forever.
+	Task DeadLetterAsync(
+		string runId, string error, JobRunRequest? next, long nowMs, CancellationToken ct = default);
+
+	// Returns leased runs whose lease has expired to Pending. This is what makes
+	// a crashed worker recoverable, and also what makes double execution
+	// possible, hence the at-least-once contract.
+	Task<int> ReapExpiredAsync(long nowMs, CancellationToken ct = default);
+
+	// Deletes settled runs that finished before beforeMs, at most limit at a time
+	// so a long backlog is cleared in bounded chunks rather than one statement
+	// holding a lock over the whole table. Succeeded runs only by default: a dead
+	// run is evidence, and deleting it silently loses the only record that
+	// something never ran.
+	Task<int> PurgeSettledAsync(
+		long beforeMs, int limit, bool includeDead = false, CancellationToken ct = default);
+
+	// Admin. Stops a run that has not finished. Returns false when it is already
+	// settled, which is the honest answer to cancelling something that has
+	// already happened.
+	Task<bool> CancelAsync(string runId, long nowMs, CancellationToken ct = default);
+
+	// Admin. Puts a dead or cancelled run back in the queue with a fresh set of
+	// attempts. Returns false when the run is not in a state that can be requeued.
+	Task<bool> RequeueAsync(string runId, long runAtMs, long nowMs, CancellationToken ct = default);
+
+	Task<JobStoreStats> StatsAsync(long nowMs, CancellationToken ct = default);
+
+	Task<JobRun?> GetAsync(string runId, CancellationToken ct = default);
+}

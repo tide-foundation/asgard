@@ -18,6 +18,10 @@ The .NET solution lives at [aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln](aspne
 | [Tide.Asgard.AspNetCore.Authentication](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/) | Main SDK — service-collection extensions, Ed25519 helpers, token exchange |
 | [Tide.Asgard.Core](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/) | Cryptography primitives (Ed25519 / EdDSA) |
 | [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) | End-to-end working sample |
+| [Tide.Asgard.Scheduler](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler/) | Task scheduling: schedule expressions, job store contract, worker and retries. No dependencies |
+| [Tide.Asgard.Scheduler.Postgres](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler.Postgres/) | Durable Postgres job and schedule stores, migrations, notifier |
+| [Tide.Asgard.Scheduler.AspNetCore](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler.AspNetCore/) | Dependency injection and hosted service wiring for the scheduler |
+| [Tide.Asgard.Scheduler.Tests](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Scheduler.Tests/) | Scheduler test suite, no test framework required |
 
 The SDK is currently consumed via `<ProjectReference>` — see [Tide.Asgard.AspNetCore.Example.csproj](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/Tide.Asgard.AspNetCore.Example.csproj) for the wiring.
 
@@ -190,6 +194,31 @@ public class HelloController(ITokenExchangeService exchangeService) : Controller
 	}
 }
 ```
+
+## Task scheduler
+
+Asgard ships a task scheduler with matching TypeScript and .NET implementations,
+so both runtimes agree on when a job should run and how it is stored. The core of
+each takes no third party dependency.
+
+In an ASP.NET Core host it is one registration:
+
+```csharp
+builder.Services.AddAsgardScheduler(scheduler => scheduler
+    .UseStore(_ => PostgresJobStore.Create(connectionString))
+    .UseLogging()
+    .AddJob<ReconcileOrks, ReconcilePayload>("reconcile-orks")
+    .AddSchedule("nightly", "on 03:00 tz=Australia/Sydney", "reconcile-orks",
+        new ReconcilePayload("tide")));
+```
+
+Handlers are classes, so they take constructor dependencies, and each run is
+resolved from its own scope. You supply a connection string; the SDK supplies the
+schema and migrations, the claim and lease queries, retries with backoff, the
+reaper, and graceful drain on shutdown.
+
+See [docs/task-scheduler.md](docs/task-scheduler.md) for the expression language,
+recipes and operational detail. Runnable examples live in [examples/](examples/).
 
 ## License
 
