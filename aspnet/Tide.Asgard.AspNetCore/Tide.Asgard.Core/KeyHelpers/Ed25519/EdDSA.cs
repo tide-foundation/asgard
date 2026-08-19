@@ -3,6 +3,7 @@ using Org.BouncyCastle.Crypto.Generators;
 using Org.BouncyCastle.Crypto.Parameters;
 using Org.BouncyCastle.Crypto.Signers;
 using Org.BouncyCastle.Security;
+using Org.BouncyCastle.X509;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.Design;
@@ -111,6 +112,16 @@ public class EdDsa : AsymmetricAlgorithm
 		if (signatureLength <= 0) throw new ArgumentException($"{nameof(signatureLength)} must be greater than 0");
 
 		return Verify(input.Skip(inputOffset).Take(inputLength).ToArray(), signature.Skip(signatureOffset).Take(signatureLength).ToArray());
+	}
+
+	/// <summary>
+	/// Exports the public key as a DER-encoded SubjectPublicKeyInfo (RFC 8410).
+	/// </summary>
+	public override byte[] ExportSubjectPublicKeyInfo()
+	{
+		if (PublicKeyParameter == null) throw new CryptographicException("Missing EdDSA public key");
+
+		return SubjectPublicKeyInfoFactory.CreateSubjectPublicKeyInfo(PublicKeyParameter).GetDerEncoded();
 	}
 
 	public bool Verify(byte[] input, byte[] signature)

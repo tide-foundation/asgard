@@ -24,7 +24,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 			var token = await cache.GetApplicationToken(userJti);
 			if (token == null)
 			{
-				token = await tokenExchangeService.ExchangeToken("asgard_backend");
+				token = await tokenExchangeService.ExchangeToken(config.GetSection("Keycloak")["resource"]!);
 				await cache.AddApplicationToken(userJti, token, DateTime.UtcNow.AddMinutes(5));
 			}
 

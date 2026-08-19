@@ -24,7 +24,7 @@ builder.Services
 	});
 
  
-builder.Services.AddAsgard(builder.Configuration, ResourceAuthenticationMode.ClientSecret); // needed
+builder.Services.AddAsgard(builder.Configuration, ResourceAuthenticationMode.AutoMTLSEnrollment); // needed
 builder.Services.AddScoped<TidecloakPolicyProvider>(); // needed
 builder.Services.AddProblemDetails(); // needed
 
@@ -36,7 +36,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 
-app.UseTideSecuredDPoP(builder.Configuration, "asgard_frontend"); // needed   (fix????) no name needed
+app.UseTideSecuredDPoP(builder.Configuration, "frontend"); // needed   (fix????) no name needed
 
 app.UseAuthentication();
 app.UseAuthorization();

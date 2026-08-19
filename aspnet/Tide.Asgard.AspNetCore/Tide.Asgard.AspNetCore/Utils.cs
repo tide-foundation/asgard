@@ -11,6 +11,8 @@ public static class Utils
 {
 	public const string RESOURCE_CERTIFICATE_DEFAULT_PATH = "./resource.crt";
 	public const string RESOURCE_KEY_DEFAULT_PATH = "./resource.key";
+	public const string RESOURCE_CERTIFICATE_REQUEST_DEFAULT_PATH = "./resource.csr";
+	public const string ROOT_CA_DEFAULT_PATH = "./root.crt";
 	/// <summary>
 	/// Finds the first jwk in the 'keys' section of the jwk set that has crv=Ed25519
 	/// </summary>

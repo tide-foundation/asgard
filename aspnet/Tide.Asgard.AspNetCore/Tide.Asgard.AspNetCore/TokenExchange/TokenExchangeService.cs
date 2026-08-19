@@ -22,15 +22,7 @@ namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 public enum ResourceAuthenticationMode
 {
 	/// <summary>
-	/// Constant client-secret authentication to Tidecloak. Your resource will ONLY authenticate with these credentials.
-	/// </summary>
-	ClientSecret,
-	/// <summary>
-	/// Asgard will look for a mTLS key if available. Defaults to client-secret authentication if mTLS credentials not found.
-	/// </summary>
-	AutoMTLS,
-	/// <summary>
-	/// Asgard will look for a mTLS key if available. If none found, will attempt to enroll a mTLS resource certificate using enrollment token.
+	/// Asgard will look for a mTLS key if available. If none found, will attempt to enroll a mTLS resource certificate using enrollment token, resulting in a Tide Resource Identity.
 	/// </summary>
 	AutoMTLSEnrollment,
 	/// <summary>
@@ -168,7 +160,7 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 			["subject_token"] = userDPoPToken,
 			["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
 			["actor_token"] = dpopProof,
-			["actor_token_type"] = "urn:ietf:params:oauth:token-type:delegatation+jwt"
+			["actor_token_type"] = "urn:ietf:params:oauth:token-type:delegation+jwt"
 		};
 		if (requestedAudience != null) forms["audience"] = requestedAudience;
 		var body = new FormUrlEncodedContent(forms);
@@ -188,6 +180,8 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 
 		if (!result.TryGetProperty("access_token", out var token))
 			throw new InvalidOperationException("Token exchange response did not contain an access_token.");
+
+		Console.WriteLine(token.GetString()!);
 
 		return token.GetString()!;
 	}
