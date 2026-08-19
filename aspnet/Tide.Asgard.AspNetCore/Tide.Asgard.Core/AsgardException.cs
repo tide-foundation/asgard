@@ -10,7 +10,8 @@ public enum AsgardErrorCode
 	DokenNotFound = 1,
 	InvalidDoken = 2,
 	DPoPDelegationProofNotFound = 3,
-	SessionKeyApprovalNotFound = 4
+	SessionKeyApprovalNotFound = 4,
+	ResourceIdentityNotRegistered = 5
 
 }
 public class AsgardException : Exception
@@ -23,6 +24,14 @@ public class AsgardException : Exception
 		: base(GetMessage(code))
 	{
 		Code = code;
+	}
+
+	/// <summary>For failures that are not the caller's fault - the default 401 would misattribute those.</summary>
+	public AsgardException(AsgardErrorCode code, int httpErrorCode)
+		: base(GetMessage(code))
+	{
+		Code = code;
+		HttpErrorCode = httpErrorCode;
 	}
 
 	public AsgardException(AsgardErrorCode code, Action<Dictionary<string, string>> responseHeadersAction)
@@ -44,6 +53,7 @@ public class AsgardException : Exception
 	{
 		AsgardErrorCode.DokenNotFound => "Doken not found",
 		AsgardErrorCode.InvalidDoken => "Invalid Doken",
+		AsgardErrorCode.ResourceIdentityNotRegistered => "This resource has no approved Tide resource identity yet, so it cannot authenticate to Tidecloak. Approve its certificate request in Tidecloak - enrollment is retried every minute and needs no restart.",
 		_ => "Unknown error",
 	};
 }

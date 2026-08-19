@@ -8,6 +8,7 @@ using Cryptide.Tools;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Ork.Clients;
 using Ork.Clients.Providers;
 using System.Net;
@@ -22,6 +23,7 @@ using System.Text;
 using System.Text.Json;
 using Tide.Asgard.AspNetCore.Authentication.DPoP;
 using Tide.Asgard.AspNetCore.Authentication.Middleware;
+using Tide.Asgard.AspNetCore.Authentication.mTLS;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 using Tide.Asgard.Core;
 using Tide.Asgard.Core.Crypto.Ed25519;
@@ -213,30 +215,72 @@ public static class ServiceCollectionExtensions
 		string realm = GetRealm(configurationSection);
 		var paths = GetResourceIdentityPaths(configurationSection);
 
+		// the register is the http client's only source of mTLS credentials. It is created here so the same instance
+		// can be filled in now if the identity is ready, or later by the background enrollment service if it is not.
+		var register = new CertificateRegisterSingleton();
+		services.AddSingleton(register);
+
 		switch (authMode)
 		{
 			case ResourceAuthenticationMode.AutoMTLSEnrollment:
-				var enrolledIdentity = await EnrollResourceIdentity(configurationSection, baseRealmUrl, paths, resourceKeyProvider);
-				ConfigureMTLSTidecloakClient(services, baseRealmUrl, realm, enrolledIdentity, resourceKeyProvider.GetResourceKey());
+				try
+				{
+					await TryRegisterResourceIdentity(configurationSection, resourceKeyProvider, register);
+				}
+				catch (Exception exception)
+				{
+					// Tidecloak being unreachable at startup is not fatal in this mode - the service retries
+					Console.WriteLine($"[mTLS] enrollment attempt failed at startup: {exception.Message}");
+				}
+
+				// keeps trying every minute, so an approval that lands after startup does not need a restart
+				services.AddHostedService(serviceProvider => new ResourceIdentityEnrollmentService(
+					configurationSection,
+					serviceProvider.GetRequiredService<IResourceKeyProvider>(),
+					register,
+					serviceProvider.GetRequiredService<ILogger<ResourceIdentityEnrollmentService>>()));
 				break;
 
 			case ResourceAuthenticationMode.MTLS:
-				// no enrollment in this mode - the credentials have to be on disk already
+				// no enrollment in this mode - the credentials have to be on disk already, so a missing identity is a
+				// deployment error rather than something to wait for
 				var identity = LoadResourceIdentity(configurationSection, paths, resourceKeyProvider.GetResourceKey())
 					?? throw new InvalidOperationException($"{ResourceAuthenticationMode.MTLS} requires a signed certificate at '{paths.CertificatePath}' and a root CA at '{paths.RootCaPath}'. Use {ResourceAuthenticationMode.AutoMTLSEnrollment} to enroll them.");
-				ConfigureMTLSTidecloakClient(services, baseRealmUrl, realm, identity, resourceKeyProvider.GetResourceKey());
+				register.Register(CreateClientCertificate(identity.Certificate, resourceKeyProvider.GetResourceKey()), identity.TrustBundle);
 				break;
 			default:
 				throw new NotSupportedException($"Unsupported {nameof(ResourceAuthenticationMode)}: {authMode}");
 		}
+
+		ConfigureMTLSTidecloakClient(services, baseRealmUrl, realm);
+	}
+
+	/// <summary>
+	/// One enrollment attempt. Publishes the mTLS credentials to <paramref name="register"/> and returns true once
+	/// Tidecloak has an approved certificate for this resource key; false while the request is still pending.
+	/// </summary>
+	internal static async Task<bool> TryRegisterResourceIdentity(IConfigurationSection configurationSection, IResourceKeyProvider resourceKeyProvider, CertificateRegisterSingleton register)
+	{
+		var identity = await EnrollResourceIdentity(
+			configurationSection,
+			GetBaseRealmUrl(configurationSection),
+			GetResourceIdentityPaths(configurationSection),
+			resourceKeyProvider);
+
+		if (identity == null) return false;
+
+		// built once here rather than per handshake: on Windows every PKCS#12 load leaves another key in the store
+		register.Register(CreateClientCertificate(identity.Certificate, resourceKeyProvider.GetResourceKey()), identity.TrustBundle);
+		return true;
 	}
 
 	/// <summary>
 	/// Brings the resource identity to a usable state: mints the resource key if there isn't one, requests a
 	/// certificate with the enrollment token if none has been requested yet, and collects the signed certificate once
-	/// Tidecloak has approved it. Safe to call on every startup - each step is skipped once its output is on disk.
+	/// Tidecloak has approved it. Safe to call on every startup - each step is skipped once its output is on disk -
+	/// and safe to call repeatedly. Null means the request is still waiting on approval.
 	/// </summary>
-	private static async Task<ResourceIdentity> EnrollResourceIdentity(IConfigurationSection configurationSection, string baseRealmUrl, ResourceIdentityPaths paths, IResourceKeyProvider resourceKeyProvider)
+	private static async Task<ResourceIdentity?> EnrollResourceIdentity(IConfigurationSection configurationSection, string baseRealmUrl, ResourceIdentityPaths paths, IResourceKeyProvider resourceKeyProvider)
 	{
 		var resourceKey = GetOrCreateResourceKey(resourceKeyProvider);
 
@@ -287,12 +331,8 @@ public static class ServiceCollectionExtensions
 		var resourceIdentityResponse = JsonSerializer.Deserialize<ResourceIdentityResponse>(await statusResponse.Content.ReadAsStringAsync()) ?? throw new InvalidOperationException("Failed to deserialize resource identity response");
 		if (resourceIdentityResponse.status != ACTIVE_RESOURCE_IDENTITY_STATUS)
 		{
-			if (justCreated)
-			{
-				Console.WriteLine($"Certificate request submitted to Tidecloak. Approve it in Tidecloak, then start the resource again.");
-				Environment.Exit(0);
-			}
-			throw new InvalidOperationException($"The resource identity is '{resourceIdentityResponse.status}', not '{ACTIVE_RESOURCE_IDENTITY_STATUS}'. Approve it in Tidecloak, then start the resource again.");
+			if (justCreated) Console.WriteLine("Certificate request submitted to Tidecloak. Approve it in Tidecloak to finish enrollment.");
+			return null;
 		}
 
 		var certificate = X509Certificate2.CreateFromPem(resourceIdentityResponse.GetCertificate());
@@ -346,13 +386,8 @@ public static class ServiceCollectionExtensions
 	/// client certificate, and Tidecloak's server certificate has to chain to the realm's root CA rather than to
 	/// whatever the machine trust store happens to contain.
 	/// </summary>
-	private static void ConfigureMTLSTidecloakClient(IServiceCollection services, string baseRealmUrl, string realm, ResourceIdentity identity, TideKey resourceKey)
+	private static void ConfigureMTLSTidecloakClient(IServiceCollection services, string baseRealmUrl, string realm)
 	{
-		// built once rather than per handler: the factory rebuilds the handler periodically, and on Windows every
-		// PKCS#12 load leaves another key behind in the store
-		var clientCertificate = CreateClientCertificate(identity.Certificate, resourceKey);
-		var trustBundle = identity.TrustBundle;
-
 		// The reverse proxy in front of Tidecloak serves each realm on its own "{realm}.client.{domain}" vhost and
 		// selects that realm's certificate from the server name.
 		var configuredUri = new Uri(baseRealmUrl);
@@ -363,22 +398,23 @@ public static class ServiceCollectionExtensions
 			Port = 8443
 		}.Uri;
 
-		Console.WriteLine($"[mTLS] 'Tidecloak' client registered for {realmUri} (configured as '{baseRealmUrl}')");
-		Console.WriteLine($"[mTLS]   client cert: subject='{clientCertificate.Subject}' issuer='{clientCertificate.Issuer}' thumbprint={clientCertificate.Thumbprint} hasPrivateKey={clientCertificate.HasPrivateKey} notBefore={clientCertificate.NotBefore:O} notAfter={clientCertificate.NotAfter:O}");
-		Console.WriteLine($"[mTLS]   trust bundle: subject='{trustBundle.Subject}' issuer='{trustBundle.Issuer}' thumbprint={trustBundle.Thumbprint}");
-
 		services.AddHttpClient("Tidecloak", client =>
 		{
 			client.BaseAddress = realmUri;
 		})
-		.ConfigurePrimaryHttpMessageHandler(() =>
+		.AddHttpMessageHandler(serviceProvider => new ResourceIdentityRequiredHandler(
+			serviceProvider.GetRequiredService<CertificateRegisterSingleton>(),
+			serviceProvider.GetRequiredService<ILogger<ResourceIdentityRequiredHandler>>()))
+		.ConfigurePrimaryHttpMessageHandler(serviceProvider =>
 		{
+			var register = serviceProvider.GetRequiredService<CertificateRegisterSingleton>();
 			return new SocketsHttpHandler
 			{
 				SslOptions = new SslClientAuthenticationOptions
 				{
-					ClientCertificates = [clientCertificate],
-					RemoteCertificateValidationCallback = (_, serverCertificate, chain, errors) => ChainsToTrustBundle(serverCertificate, chain, errors, trustBundle)
+					LocalCertificateSelectionCallback = (_, _, _, _, _) => register.Current?.ClientCertificate!,
+					RemoteCertificateValidationCallback = (_, serverCertificate, chain, errors) =>
+						register.Current is { } credentials && ChainsToTrustBundle(serverCertificate, chain, errors, credentials)
 				}
 			};
 		});
@@ -447,46 +483,55 @@ public static class ServiceCollectionExtensions
 	/// <summary>
 	/// Validates the server certificate against the realm's root CA as the only trusted root.
 	/// </summary>
-	private static bool ChainsToTrustBundle(X509Certificate? serverCertificate, X509Chain? chain, SslPolicyErrors errors, X509Certificate2 trustBundle)
+	private static bool ChainsToTrustBundle(X509Certificate? serverCertificate, X509Chain? chain, SslPolicyErrors errors, CertificateRegisterSingleton.ResourceCredentials credentials)
 	{
-		Console.WriteLine($"[mTLS] validating Tidecloak server certificate - SslPolicyErrors: {errors}");
-		Console.WriteLine($"[mTLS]   trust bundle: subject='{trustBundle.Subject}' issuer='{trustBundle.Issuer}' thumbprint={trustBundle.Thumbprint} notBefore={trustBundle.NotBefore:O} notAfter={trustBundle.NotAfter:O}");
+		var (clientCertificate, trustBundle) = credentials;
 
-		if (serverCertificate == null)
+		// a handshake that works is not worth a word - the diagnostics are collected as the checks run and only
+		// printed by Reject, so the happy path stays silent
+		var diagnostics = new List<string>();
+
+		bool Reject(string reason)
 		{
-			Console.WriteLine("[mTLS]   REJECTED: the server presented no certificate");
+			Console.WriteLine($"[mTLS] REJECTED the Tidecloak server certificate: {reason}");
+			Console.WriteLine($"[mTLS]   SslPolicyErrors: {errors}");
+			Console.WriteLine($"[mTLS]   client cert presented: subject='{clientCertificate.Subject}' thumbprint={clientCertificate.Thumbprint} hasPrivateKey={clientCertificate.HasPrivateKey}");
+			Console.WriteLine($"[mTLS]   trust bundle: subject='{trustBundle.Subject}' issuer='{trustBundle.Issuer}' thumbprint={trustBundle.Thumbprint} notBefore={trustBundle.NotBefore:O} notAfter={trustBundle.NotAfter:O}");
+			foreach (var diagnostic in diagnostics)
+			{
+				Console.WriteLine($"[mTLS]   {diagnostic}");
+			}
 			return false;
 		}
 
+		if (serverCertificate == null) return Reject("the server presented no certificate");
+
 		using var serverCertificateCopy = X509CertificateLoader.LoadCertificate(serverCertificate.Export(X509ContentType.Cert));
-		Console.WriteLine($"[mTLS]   server cert: subject='{serverCertificateCopy.Subject}' issuer='{serverCertificateCopy.Issuer}' thumbprint={serverCertificateCopy.Thumbprint} notBefore={serverCertificateCopy.NotBefore:O} notAfter={serverCertificateCopy.NotAfter:O}");
+		diagnostics.Add($"server cert: subject='{serverCertificateCopy.Subject}' issuer='{serverCertificateCopy.Issuer}' thumbprint={serverCertificateCopy.Thumbprint} notBefore={serverCertificateCopy.NotBefore:O} notAfter={serverCertificateCopy.NotAfter:O}");
+
 		// the SANs are what the hostname is matched against - a bare CN is ignored by modern validation
 		var subjectAlternativeNames = serverCertificateCopy.Extensions
 			.OfType<X509SubjectAlternativeNameExtension>()
 			.SelectMany(extension => extension.EnumerateDnsNames().Concat(extension.EnumerateIPAddresses().Select(ip => ip.ToString())))
 			.ToArray();
-		Console.WriteLine($"[mTLS]   server cert SANs: {(subjectAlternativeNames.Length == 0 ? "(none - hostname validation cannot pass)" : string.Join(", ", subjectAlternativeNames))}");
+		diagnostics.Add($"server cert SANs: {(subjectAlternativeNames.Length == 0 ? "(none - hostname validation cannot pass)" : string.Join(", ", subjectAlternativeNames))}");
 
 		if (chain != null)
 		{
-			Console.WriteLine($"[mTLS]   chain the server sent ({chain.ChainElements.Count} element(s)):");
+			diagnostics.Add($"the server sent a {chain.ChainElements.Count} element chain:");
 			foreach (var element in chain.ChainElements)
 			{
-				var elementStatus = element.ChainElementStatus.Length == 0 ? "ok" : string.Join(", ", element.ChainElementStatus.Select(s => $"{s.Status}: {s.StatusInformation?.Trim()}"));
-				Console.WriteLine($"[mTLS]     subject='{element.Certificate.Subject}' issuer='{element.Certificate.Issuer}' thumbprint={element.Certificate.Thumbprint} status={elementStatus}");
+				diagnostics.Add($"  subject='{element.Certificate.Subject}' issuer='{element.Certificate.Issuer}' thumbprint={element.Certificate.Thumbprint} status={DescribeStatus(element.ChainElementStatus)}");
 			}
 		}
 		else
 		{
-			Console.WriteLine("[mTLS]   the server sent no chain - if its certificate is not directly signed by the trust bundle root, no intermediate is available to bridge the gap");
+			diagnostics.Add("the server sent no chain - if its certificate is not directly signed by the trust bundle root, no intermediate is available to bridge the gap");
 		}
 
 		// the trust bundle only answers "who signed this" - a wrong hostname is still a failure
 		if (errors.HasFlag(SslPolicyErrors.RemoteCertificateNotAvailable) || errors.HasFlag(SslPolicyErrors.RemoteCertificateNameMismatch))
-		{
-			Console.WriteLine($"[mTLS]   REJECTED before chain building: {errors}. A name mismatch means the host in the request url is not covered by the SANs above.");
-			return false;
-		}
+			return Reject("the host in the request url is not covered by its SANs");
 
 		using var trustBundleChain = new X509Chain();
 		trustBundleChain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
@@ -503,25 +548,24 @@ public static class ServiceCollectionExtensions
 			}
 		}
 
-		var built = trustBundleChain.Build(serverCertificateCopy);
-		if (built)
-		{
-			Console.WriteLine("[mTLS]   ACCEPTED: server certificate chains to the realm trust bundle");
-			return true;
-		}
+		if (trustBundleChain.Build(serverCertificateCopy)) return true;
 
-		Console.WriteLine("[mTLS]   REJECTED: server certificate does not chain to the realm trust bundle");
 		foreach (var status in trustBundleChain.ChainStatus)
 		{
-			Console.WriteLine($"[mTLS]     chain status: {status.Status} - {status.StatusInformation?.Trim()}");
+			diagnostics.Add($"chain status: {status.Status} - {status.StatusInformation?.Trim()}");
 		}
 		foreach (var element in trustBundleChain.ChainElements)
 		{
-			var elementStatus = element.ChainElementStatus.Length == 0 ? "ok" : string.Join(", ", element.ChainElementStatus.Select(s => $"{s.Status}: {s.StatusInformation?.Trim()}"));
-			Console.WriteLine($"[mTLS]     built element: subject='{element.Certificate.Subject}' issuer='{element.Certificate.Issuer}' status={elementStatus}");
+			diagnostics.Add($"built element: subject='{element.Certificate.Subject}' issuer='{element.Certificate.Issuer}' status={DescribeStatus(element.ChainElementStatus)}");
 		}
-		return false;
+		return Reject("it does not chain to the realm trust bundle");
 	}
+
+	/// <summary>The per-element chain status, flattened for one diagnostic line.</summary>
+	private static string DescribeStatus(X509ChainStatus[] chainElementStatus)
+		=> chainElementStatus.Length == 0
+			? "ok"
+			: string.Join(", ", chainElementStatus.Select(status => $"{status.Status}: {status.StatusInformation?.Trim()}"));
 
 	private static string GetClientId(IConfigurationSection section)
 		=> section["resource"] ?? throw new InvalidOperationException("Missing required configuration: resource");
@@ -549,6 +593,7 @@ public static class ServiceCollectionExtensions
 	private sealed record ResourceIdentity(X509Certificate2 Certificate, X509Certificate2 TrustBundle);
 
 	private const string ACTIVE_RESOURCE_IDENTITY_STATUS = "ACTIVE";
+
 
 	private sealed class ResourceIdentityResponse
 	{
