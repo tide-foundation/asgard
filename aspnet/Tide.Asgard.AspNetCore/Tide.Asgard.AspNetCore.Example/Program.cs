@@ -1,12 +1,7 @@
 using Keycloak.AuthServices.Authentication;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
-using System.Security.Cryptography.X509Certificates;
 using Tide.Asgard.AspNetCore.Authentication;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 using Tide.Asgard.AspNetCore.DPoP;
-using Tide.Asgard.Core.Crypto.Ed25519;
-using Tide.Asgard.Core.PolicyHelpers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -36,7 +31,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 
-app.UseTideSecuredDPoP(builder.Configuration, "frontend"); // needed   (fix????) no name needed
+app.UseTideSecuredDPoP(builder.Configuration, "frontend"); // needed
 
 app.UseAuthentication();
 app.UseAuthorization();

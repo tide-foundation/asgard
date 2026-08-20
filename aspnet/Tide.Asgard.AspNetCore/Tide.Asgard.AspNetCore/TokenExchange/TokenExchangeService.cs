@@ -234,12 +234,4 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 
 
 	}
-
-	private void ValidateExchangeProof(SecurityKey userBoundKey, JwtSecurityToken exchangeProof)
-	{
-		// Ensure that the session key in the token / doken signed this client's certificate
-
-		throw new NotImplementedException();
-	}
 }
-internal sealed class TokenExchangeClientMarker { }

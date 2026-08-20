@@ -21,13 +21,11 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
-using Tide.Asgard.AspNetCore.Authentication.DPoP;
 using Tide.Asgard.AspNetCore.Authentication.Middleware;
 using Tide.Asgard.AspNetCore.Authentication.mTLS;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 using Tide.Asgard.Core;
 using Tide.Asgard.Core.Crypto.Ed25519;
-using Tide.Asgard.Core.KeyHelpers.Ed25519;
 using Tide.Asgard.Core.PolicyHelpers;
 
 namespace Tide.Asgard.AspNetCore.Authentication;
@@ -39,101 +37,6 @@ namespace Tide.Asgard.AspNetCore.Authentication;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
-	/// <summary>
-	/// Enables OAuth 2.0 Token Exchange in your application.
-	/// </summary>
-	/// <returns></returns>
-	/// <exception cref="InvalidOperationException"></exception>
-	public static IServiceCollection AddTokenExchange(
-		this IServiceCollection services,
-		string tidecloakHttpsDomain,
-		string realm,
-		string clientId,
-		string[] certificatePaths
-		)
-	{
-		ArgumentNullException.ThrowIfNull(services);
-		ArgumentNullException.ThrowIfNull(certificatePaths);
-
-		var domainUri = new Uri(tidecloakHttpsDomain);
-		if (domainUri.Scheme != Uri.UriSchemeHttps)
-		{
-			throw new InvalidOperationException($"The provided domain '{tidecloakHttpsDomain}' is not a valid HTTPS URL.");
-		}
-		var httpsRealmDomain = domainUri.GetLeftPart(UriPartial.Authority) + $"/realms/{realm}/";
-
-		X509CertificateCollection certList = [];
-		foreach (var certPath in certificatePaths)
-		{
-			if (!File.Exists(certPath))
-			{
-				throw new InvalidOperationException($"Certificate file not found at path: {certPath}");
-			}
-			certList.Add(X509CertificateLoader.LoadPkcs12FromFile(certPath, password: null));
-		}
-
-		services.AddHttpClient("Tidecloak", client =>
-		{
-			client.BaseAddress = new Uri(httpsRealmDomain);
-		})
-		.ConfigurePrimaryHttpMessageHandler(() =>
-		{
-			return new SocketsHttpHandler
-			{
-				SslOptions = new SslClientAuthenticationOptions
-				{
-					ClientCertificates = certList
-				}
-			};
-		});
-
-		services.TryAddSingleton<ITokenExchangeService, TokenExchangeService>();
-
-		return services;
-	}
-
-	// add support for the configuration to be a section to allow for multiple token exchange clients to be configured in the same app
-	public static IServiceCollection AddTokenExchangeForClient(
-		this IServiceCollection services,
-		IConfigurationSection configurationSection
-		)
-	{
-		ArgumentNullException.ThrowIfNull(services);
-		ArgumentNullException.ThrowIfNull(configurationSection);
-		string clientId = GetClientId(configurationSection);
-		string clientSecret = configurationSection["credentials:secret"] ?? throw new InvalidOperationException("Missing required configuration: credentials:secret");
-		string baseRealmUrl = GetBaseRealmUrl(configurationSection);
-
-		var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
-
-		services.AddHttpClient("Tidecloak", client =>
-		{
-			client.BaseAddress = new Uri(baseRealmUrl);
-			client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
-		});
-
-		services.TryAddScoped<ITokenExchangeService, TokenExchangeService>();
-		services.AddHttpContextAccessor();
-
-		return services;
-	}
-
-	/// <summary>
-	/// Enables OAuth 2.0 Token Exchange in your application.
-	/// </summary>
-	/// <returns></returns>
-	/// <exception cref="InvalidOperationException"></exception>
-	public static IServiceCollection AddTokenExchange(
-		this IServiceCollection services,
-		IConfiguration configuration
-		)
-	{
-		ArgumentNullException.ThrowIfNull(services);
-		ArgumentNullException.ThrowIfNull(configuration);
-
-		return AddTokenExchangeForClient(services, configuration.GetSection("Keycloak") ?? throw new InvalidOperationException("Missing required configuration section: Keycloak"));
-	}
-
 	/// <summary>
 	/// Default implementation of Asgard registration. Uses a FileDeviceKeyProvider to store the device key in a file.
 	/// </summary>
@@ -269,7 +172,6 @@ public static class ServiceCollectionExtensions
 
 		if (identity == null) return false;
 
-		// built once here rather than per handshake: on Windows every PKCS#12 load leaves another key in the store
 		register.Register(CreateClientCertificate(identity.Certificate, resourceKeyProvider.GetResourceKey()), identity.TrustBundle);
 		return true;
 	}
@@ -414,7 +316,7 @@ public static class ServiceCollectionExtensions
 				{
 					LocalCertificateSelectionCallback = (_, _, _, _, _) => register.Current?.ClientCertificate!,
 					RemoteCertificateValidationCallback = (_, serverCertificate, chain, errors) =>
-						register.Current is { } credentials && ChainsToTrustBundle(serverCertificate, chain, errors, credentials)
+						register.Current is { } credentials && ValidateTidecloakCertificate(serverCertificate, chain, errors, credentials)
 				}
 			};
 		});
@@ -483,7 +385,7 @@ public static class ServiceCollectionExtensions
 	/// <summary>
 	/// Validates the server certificate against the realm's root CA as the only trusted root.
 	/// </summary>
-	private static bool ChainsToTrustBundle(X509Certificate? serverCertificate, X509Chain? chain, SslPolicyErrors errors, CertificateRegisterSingleton.ResourceCredentials credentials)
+	private static bool ValidateTidecloakCertificate(X509Certificate? serverCertificate, X509Chain? chain, SslPolicyErrors errors, CertificateRegisterSingleton.ResourceCredentials credentials)
 	{
 		var (clientCertificate, trustBundle) = credentials;
 

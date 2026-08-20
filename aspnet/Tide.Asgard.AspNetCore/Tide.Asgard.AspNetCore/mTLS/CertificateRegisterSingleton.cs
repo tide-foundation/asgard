@@ -11,7 +11,7 @@ public sealed class CertificateRegisterSingleton
 	/// <summary>The credentials to hand the current handshake, or null while the enrollment is still pending.</summary>
 	public ResourceCredentials? Current => credentials;
 
-	public void Register(X509Certificate2 clientCertificate, X509Certificate2 trustBundle)
+	public void Register(X509Certificate2 clientCertificate, X509Certificate2 trustBundle) 
 		=> credentials = new ResourceCredentials(clientCertificate, trustBundle);
 
 	/// <param name="ClientCertificate">Presented to Tidecloak as this resource's identity.</param>

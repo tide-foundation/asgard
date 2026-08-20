@@ -18,8 +18,6 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 		[HttpGet("Create")]
 		public async Task<IActionResult> Create()
 		{
-			// need to exchange dpop here for a token to communicate with tidecloak
-
 			var userJti = User.FindFirst("jti")?.Value!;
 			var token = await cache.GetApplicationToken(userJti);
 			if (token == null)
