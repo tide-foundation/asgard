@@ -1,0 +1,19 @@
+{
+  "name": "asgard-aspnet-playwright-tests",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Playwright tests for the Tide.Asgard.AspNetCore.Example app: the iga-engine-tests harness plus app-level tests.",
+  "scripts": {
+    "test": "playwright test",
+    "test:harness": "playwright test --project=harness",
+    "test:app": "playwright test --project=app",
+    "test:mtls-exchange": "playwright test tests/mtls-exchange.spec.ts",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.10.1"
+  }
+}

@@ -1,4 +1,4 @@
-// Copyright (c) Okta, Inc. and/or its affiliates. All rights reserved.
+﻿// Copyright (c) Okta, Inc. and/or its affiliates. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See LICENSE-APACHE-2.0 in the project root.
 // Modifications Copyright (c) Tide Foundation Limited.
 
@@ -136,7 +136,7 @@ public static class ServiceCollectionExtensions
 					Console.WriteLine($"[mTLS] enrollment attempt failed at startup: {exception.Message}");
 				}
 
-				// keeps trying every minute, so an approval that lands after startup does not need a restart
+				// keeps trying on the configured interval, so an approval that lands after startup does not need a restart
 				services.AddHostedService(serviceProvider => new ResourceIdentityEnrollmentService(
 					configurationSection,
 					serviceProvider.GetRequiredService<IResourceKeyProvider>(),

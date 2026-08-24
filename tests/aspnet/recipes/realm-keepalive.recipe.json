@@ -1,0 +1,13 @@
+{
+  "name": "realm-keepalive",
+  "hypothesis": "A Tide+IGA+ORK realm bootstrapped by the iga-engine-tests framework survives the run under KEEP_REALM=1, so this suite can provision a realm for the Asgard example app.",
+  "tags": ["harness", "baseline", "keepalive"],
+  "_purpose": "Base harness probe for the Asgard test project — it verifies the PIPELINE (framework present, recipe executes, realm persists), not any TideCloak behaviour. The real Asgard realm recipe replaces this once defined.",
+  "_why-this-probe": "Deliberately a BASELINE probe, not a suspect — AUTHORING.md's HELD verdict ('predicted accept/sign/reject and it happened') is the framework's own name for exactly this, and tests/token-signing/baseline-clean-signs.recipe.json is the precedent. It is not fully tautological: the /iga/change-requests endpoint only exists on an IGA-enabled realm, so a mis-bootstrapped realm 404s -> 'reject' -> RED rather than passing silently. The realm's Tide/IGA/ORK properties are asserted by the caller (tests/iga-engine-harness.spec.ts) after the run, not here.",
+  "_no-setup-by-design": "No setup[] step. A governed write (e.g. role.create) can fail at authorize/commit on a freshly bootstrapped realm — createTideOrkIgaRealm's drainPending is best-effort and never asserts drain.remaining === 0 — and runner.ts marks an arrange-step >=400 as BLOCKED. That risk buys nothing here: realm survival does not depend on creating anything.",
+  "probe": {
+    "kind": "iga.listChangeRequests",
+    "args": { "status": "PENDING" }
+  },
+  "expect": { "side": "iga", "outcome": "accept" }
+}

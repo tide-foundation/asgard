@@ -1,0 +1,17 @@
+bin/
+obj/
+ClientApp/node_modules/
+
+# vite build output
+wwwroot/
+
+# Installed adaptor configs — realm-specific, and the backend's carries a live
+# enrollment_token. Never commit them.
+adaptors/
+
+# mTLS enrollment material written by AddAsgard(..., AutoMTLSEnrollment) at
+# startup. Private key + CSR + issued cert, all realm-specific. Never commit.
+resource.key
+resource.csr
+resource.crt
+root.crt
