@@ -38,6 +38,10 @@ either file is absent.
 
 ## Running
 
+The Playwright suite (`tests/mtls-exchange.spec.ts`) does all of this itself —
+`lib/testserver.ts#buildAll` runs the SPA build and `dotnet build` before
+starting the server, so there is no manual step. To run it by hand:
+
 ```bash
 # once — builds the SPA into ../wwwroot
 cd ClientApp && npm install --ignore-scripts && npm run build
@@ -54,6 +58,17 @@ enough — a plain `npm install` fails.
 
 Listens on <http://localhost:3000> — the origin the `frontend` client's redirect
 URIs and web origins are registered against.
+
+### Realm vhosts and DNS
+
+The library's mTLS client talks to `https://<realm>.client.localhost:8443`, and
+the suite mints a new realm name every run — a name glibc will not resolve
+(only bare `localhost` is special). `Program.cs` therefore adds a
+`ConnectCallback` to that client which dials the configured `auth-server-url`
+host for any `*.client.<host>` name, leaving the Host header and TLS SNI on the
+realm vhost so the proxy still picks the realm's certificate. No `/etc/hosts`
+or resolver changes are needed. This is a test-environment shim only; a real
+deployment has DNS for its realm vhosts.
 
 ## What the endpoint returns
 

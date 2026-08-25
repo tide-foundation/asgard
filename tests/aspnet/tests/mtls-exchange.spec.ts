@@ -10,7 +10,7 @@ import {
 } from '../lib/iga-changerequests';
 import {
   type RunningServer,
-  buildTestServer,
+  buildAll,
   clearEnrollment,
   installAdaptors,
   startTestServer,
@@ -337,9 +337,11 @@ test.describe('mTLS token exchange', () => {
       test.info().annotations.push({ type: 'installed-adaptors', description: installed });
     });
 
-    await test.step('build and start the test server', async () => {
-      const build = buildTestServer();
-      expect(build.ok, `dotnet build failed:\n${build.output.slice(-4000)}`).toBe(true);
+    await test.step('build the SPA and the test server, then start it', async () => {
+      // SPA (npm install + vite build -> wwwroot) and dotnet build. A missing
+      // wwwroot makes `/` a 404, so both are part of the test, not a manual step.
+      const build = buildAll();
+      expect(build.ok, `build failed:\n${build.output.slice(-4000)}`).toBe(true);
       server = await startTestServer();
     });
 
