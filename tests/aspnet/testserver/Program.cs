@@ -66,6 +66,61 @@ builder.Services
 
 builder.Services.AddAsgard(builder.Configuration, ResourceAuthenticationMode.AutoMTLSEnrollment); // needed
 
+// ---------------------------------------------------------------------------
+// mTLS VHOST RESOLUTION (test environment only)
+//
+// AddAsgard's "Tidecloak" http client talks to https://{realm}.client.{host}:8443
+// — the reverse proxy picks the realm's certificate from the TLS server name.
+// With the local stack {host} is "localhost", and the Playwright suite mints a
+// fresh realm name every run, so the vhost is something like
+// iga-mtls-exchange-mt8251050.client.localhost — which glibc will NOT resolve
+// (only bare "localhost" is special; subdomains need a wildcard resolver or an
+// /etc/hosts line that cannot be pre-written for a random name).
+//
+// Rather than require a machine-level DNS tweak, dial the CONFIGURED host's
+// address for any "*.client.{host}" name. Only the TCP destination changes: the
+// request's Host header and the TLS SNI keep the realm vhost, so the proxy still
+// selects the right realm certificate. Appended after AddAsgard so it runs after
+// the library's own handler configuration and only tweaks the socket dial —
+// the client-certificate and trust-bundle SslOptions are untouched.
+//
+// A real deployment has DNS for its realm vhosts and must not do this.
+// ---------------------------------------------------------------------------
+{
+	var tidecloakHost = new Uri(builder.Configuration["Keycloak:auth-server-url"]!).Host;
+	var vhostSuffix = $".client.{tidecloakHost}";
+
+	builder.Services.Configure<Microsoft.Extensions.Http.HttpClientFactoryOptions>("Tidecloak", options =>
+		options.HttpMessageHandlerBuilderActions.Add(handlerBuilder =>
+		{
+			if (handlerBuilder.PrimaryHandler is not SocketsHttpHandler sockets) return;
+
+			sockets.ConnectCallback = async (context, cancellationToken) =>
+			{
+				var target = context.DnsEndPoint;
+				if (target.Host.EndsWith(vhostSuffix, StringComparison.OrdinalIgnoreCase))
+				{
+					target = new System.Net.DnsEndPoint(tidecloakHost, target.Port);
+				}
+
+				var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp)
+				{
+					NoDelay = true,
+				};
+				try
+				{
+					await socket.ConnectAsync(target, cancellationToken);
+					return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+				}
+				catch
+				{
+					socket.Dispose();
+					throw;
+				}
+			};
+		}));
+}
+
 // AddAsgard registers an IExceptionHandler, which only runs behind
 // UseExceptionHandler — and that wants ProblemDetails. Both are marked "needed"
 // in the example app for the same reason.
