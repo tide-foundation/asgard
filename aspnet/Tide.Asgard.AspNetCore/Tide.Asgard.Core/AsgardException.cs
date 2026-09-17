@@ -6,15 +6,19 @@ namespace Tide.Asgard.Core;
 
 public enum AsgardErrorCode
 {
-	Unknown = 0,
-	DokenNotFound = 1,
-	InvalidDoken = 2,
-	DPoPDelegationProofNotFound = 3,
-	SessionKeyApprovalNotFound = 4,
-	ResourceIdentityNotRegistered = 5,
-	ResourceCertificateRevoked = 6,
-	ResourceCertificateClientMismatch = 7
+	Unknown,
+	DokenNotFound,
+	InvalidDoken,
 
+	DPoPDelegationProofNotFound,
+	DPoPDelegationInvalid,
+
+	TideEnclaveApprovalNotFound,
+	TideSessionKeyNotFound,
+	TideSessionKeyError,
+	ResourceIdentityNotRegistered,
+	ResourceCertificateRevoked,
+	ResourceCertificateClientMismatch
 }
 public class AsgardException : Exception
 {

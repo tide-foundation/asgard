@@ -5,13 +5,12 @@ using Ork.Models;
 using System.Text;
 using Tide.Asgard.AspNetCore.Authentication;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
-using Tide.Asgard.Core;
-using Tide.Asgard.Core.PolicyHelpers;
 
 namespace Tide.Asgard.AspNetCore.Example.Controllers
 {
 	[Authorize]
 	[ApiController]
+	[RequireExchangeApproval(ApprovalRequirement.TideSecuredDPoP)]
 	[Route("[controller]")]
 	public class AccountController(IAspAsgardService asgardService) : ControllerBase
 	{

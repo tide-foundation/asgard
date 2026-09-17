@@ -34,7 +34,6 @@ public enum ResourceAuthenticationMode
 public interface ITokenExchangeService
 {
 	Task<string> ExchangeToken(string requestingClientId, string? requestedAudience = null);
-	Task<string> ExchangeTideDokenForApplicationDoken();
 }
 public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccessor httpContextAccessor, IResourceKeyProvider resourceKeyProvider) : ITokenExchangeService
 {
@@ -57,57 +56,7 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 		if (isDPoP)
 			return await ExchangeDPoPToken(requestingClientId, requestedAudience);
 		else
-			return await ExchangeAccessToken(requestingClientId, requestedAudience);
-	}
-
-	/// <summary>
-	/// Looks at the Bearer Header
-	/// </summary>
-	/// <returns></returns>
-	private async Task<string> ExchangeAccessToken(string requestingClientId, string? requestedAudience = null)
-	{
-		if (!GetHttpContext().Request.Headers.TryGetValue("Authorization", out var authHeader))
-			throw new UnauthorizedAccessException("Authorization header is missing.");
-
-		var headerValue = authHeader.ToString();
-
-		if (!headerValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-			throw new UnauthorizedAccessException("Authorization header is not a Bearer token.");
-
-		var userAccessToken = headerValue["Bearer ".Length..].Trim();
-
-		// No exchange proof validation required
-		// We can continue directly to an exchange
-
-		var client = factory.CreateClient("Tidecloak");
-
-		var forms = new Dictionary<string, string>
-		{
-			["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange",
-			["client_id"] = requestingClientId,
-			["subject_token"] = userAccessToken,
-			["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
-		};
-		if(requestedAudience != null) forms["audience"] = requestedAudience;
-		var body = new FormUrlEncodedContent(forms);
-
-		var resp = await client.PostAsync(
-			$"protocol/openid-connect/token", body);
-
-		if (!resp.IsSuccessStatusCode)
-		{
-			var error = await resp.Content.ReadAsStringAsync();
-			throw new HttpRequestException(
-				$"Token exchange failed: {resp.StatusCode} - {error}");
-		}
-
-		var json = await resp.Content.ReadAsStringAsync();
-		var result = JsonDocument.Parse(json).RootElement;
-
-		if (!result.TryGetProperty("access_token", out var token))
-			throw new InvalidOperationException("Token exchange response did not contain an access_token.");
-
-		return token.GetString()!;
+			throw new InvalidOperationException("Only DPoP token exchange is supported");
 	}
 
 	/// <summary>
@@ -137,10 +86,9 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 
 		var client = factory.CreateClient("Tidecloak");
 
-		if(client.DefaultRequestHeaders.Authorization == null && context.Items.TryGetValue("ValidatedSessionKeyApproval", out var sessionKeyApprovalItem))
+		if(context.Items.TryGetValue("ValidatedTideEnclaveApproval", out var tideEnclaveApprovalItem))
 		{
-			// Means we are using mTLS to communicate with Tidecloak (Client-Secret or Signed JWT require Authorization headers)
-			// AND the user provided a SessionKeyApproval -> we need to create an ephemeral EdDSA key to tie the resulting doken to.
+			// Means the user provided a SessionKeyApproval -> we need to create an ephemeral EdDSA key to tie the resulting doken to.
 
 			// Generate EdDSA key
 			var ephemeralEdDSAKey = TideKey.NewKey();
@@ -184,54 +132,5 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 		Console.WriteLine(token.GetString()!);
 
 		return token.GetString()!;
-	}
-
-	/// <summary>
-	/// Looks at the Doken Header
-	/// </summary>
-	/// <returns></returns>
-	public async Task<string> ExchangeTideDokenForApplicationDoken()
-	{
-		var context = GetHttpContext();
-
-		var headers = context.Request.Headers;
-		if(headers == null || !headers.TryGetValue("Application-Doken", out var applicationDoken) || !headers.TryGetValue("User-Doken", out var userDoken))
-		{
-			throw new AsgardException(AsgardErrorCode.DokenNotFound, headers =>
-			{
-				headers["Delegation-Key"] = Base64UrlEncoder.Encode(resourceKeyProvider.GetResourceKey().GetPublic().ToJwk()); // maybe it's better to return a standard serialized (not SerializedComponent)
-			});
-		}
-
-
-		//var d = deviceKeyProvider.GetDeviceKeyAsString(); // WE NEED THIS DON'T REMOVE
-
-		// WE NEED IT SO WE HAVE ACCESS TO THE DEVICE KEY TO VALIDATE THE DOKEN EXCHANGE PROOF
-
-		// This
-
-		
-
-
-
-
-
-		throw new NotImplementedException();
-
-		if (!GetHttpContext().Request.Headers.TryGetValue("Authorization", out var authHeader))
-			throw new UnauthorizedAccessException("Authorization header is missing.");
-		if (!GetHttpContext().Request.Headers.TryGetValue("Doken-Exchange-Proof", out var dokenExProof))
-			throw new UnauthorizedAccessException("Doken Exchange Proof header is missing.");
-
-		var headerValue = authHeader.ToString();
-		var exchangeProof = dokenExProof.ToString();
-
-		if (!headerValue.StartsWith("Doken ", StringComparison.OrdinalIgnoreCase))
-			throw new UnauthorizedAccessException("Authorization header is not a Tide Doken.");
-
-		//var userDoken = headerValue["Doken ".Length..].Trim();
-
-
-
 	}
 }

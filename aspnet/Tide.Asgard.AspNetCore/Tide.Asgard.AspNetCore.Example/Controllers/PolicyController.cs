@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Tide.Asgard.AspNetCore.Authentication;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
-using Tide.Asgard.AspNetCore.DPoP.Exchange;
 using Tide.Asgard.Core;
 using Tide.Asgard.Core.PolicyHelpers;
 
@@ -11,7 +10,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 {
 	[Authorize]
 	[ApiController]
-	[RequireDPoPExchangeApproval]
+	[RequireExchangeApproval(ApprovalRequirement.DPoP)]
 	[Route("[controller]")]
 	public class PolicyController(IConfiguration config, TidecloakPolicyProvider policyProvider, ITokenExchangeService tokenExchangeService, IAsgardCache cache) : Controller
 	{
