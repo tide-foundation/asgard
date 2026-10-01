@@ -13,11 +13,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Tide.Asgard.Core;
-using Tide.Asgard.AspNetCore.DPoP;
-using Tide.Asgard.AspNetCore.DPoP.Exchange;
 using Tide.Asgard.Core.Crypto.Ed25519;
 using Microsoft.AspNetCore.Http;
 using Cryptide.Tools;
+using Tide.Asgard.AspNetCore.DPoP;
 
 namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 
@@ -51,62 +50,59 @@ public class RequireExchangeApproval : Attribute, IFilterFactory
         return _requirement switch
         {
             ApprovalRequirement.DPoP => ActivatorUtilities.CreateInstance<DPoPExchangeApprovalFilter>(serviceProvider, window),
-            ApprovalRequirement.TideSecuredDPoP => ActivatorUtilities.CreateInstance<TideEnclaveApprovalFilter>(serviceProvider, window),
+            ApprovalRequirement.TideSecuredDPoP => ActivatorUtilities.CreateInstance<TideApprovalFilter>(serviceProvider, window),
             _ => throw new InvalidOperationException($"Unknown approval requirement: {_requirement}"),
         };
     }
 }
-internal interface IChainedAuthorizationFilter : IAsyncAuthorizationFilter
-{
-	public IActionResult? DelayedResult { get; set; }
-}
 internal static class Helpers
 {
-	public static void RequestResourceDelegation(AuthorizationFilterContext context, string? jti, IResourceKeyProvider deviceKeyProvider)
+	public static void RequestResourceDelegation(AuthorizationFilterContext context, string tokenId, IResourceKeyProvider deviceKeyProvider, AsgardErrorCode code = AsgardErrorCode.DPoPDelegationProofNotFound)
 	{
 		if(!context.HttpContext.Response.Headers.Any(headers => headers.Key == "Resource-Delegation-Key"))
 		{
-			// challenge input: jti when present, else RFC 9449-style ath (hash of the authenticated access token).
-			// distinct prefixes keep the two signing contexts domain-separated since jti is client-chosen.
-			var challengeInput = jti != null
-				? "resource-jti-challenge:" + jti
-				: "resource-ath-challenge:" + Base64UrlEncoder.Encode(SHA256.HashData(Encoding.UTF8.GetBytes(context.HttpContext.Request.Headers.Authorization.ToString().Split(' ')[^1])));
-			var deviceKey = deviceKeyProvider.GetResourceKey();
-			var challenge_sig = Base64UrlEncoder.Encode(deviceKey.Sign(Encoding.UTF8.GetBytes(challengeInput)));
-			context.HttpContext.Response.Headers["Resource-Delegation-Key"] = Base64UrlEncoder.Encode(deviceKey.ToSubjectPublicKeyInfoBytes());
-			context.HttpContext.Response.Headers["Resource-Delegation-Challenge"] = challenge_sig;
-			SetChallenge(context, AsgardErrorCode.DPoPDelegationProofNotFound.ToString(), "DPoP-Resource-Delegation header required");
+			if (!context.HttpContext.Response.Headers.Any(headers => headers.Key == "Resource-Delegation-Key") || !context.HttpContext.Response.Headers.Any(headers => headers.Key == "Resource-Delegation-Challenge"))
+			{
+				// the resource delegation challenge is a signature over the token id, which is either the jti claim of the access token or the hash of the access token itself
+				// challenge input: jti when present, else RFC 9449-style ath (hash of the authenticated access token).
+				// distinct prefixes keep the two signing contexts domain-separated since jti is client-chosen.
+				var challengeInput = "resource-token-id-challenge:" + tokenId;
+				var deviceKey = deviceKeyProvider.GetResourceKey().IdentitySRK;
+				var challenge_sig = Base64UrlEncoder.Encode(deviceKey.Sign(Encoding.UTF8.GetBytes(challengeInput)));
+				context.HttpContext.Response.Headers["Resource-Delegation-Key"] = Base64UrlEncoder.Encode(deviceKey.ToSubjectPublicKeyInfoBytes());
+				context.HttpContext.Response.Headers["Resource-Delegation-Challenge"] = challenge_sig;
+
+				switch (code)
+				{
+					case AsgardErrorCode.DPoPDelegationProofNotFound:
+						DPoPExchangeApprovalFilter.SetChallenge(context, code.ToString(), "DPoP-Resource-Delegation header required");
+						break;
+					case AsgardErrorCode.TideEnclaveApprovalNotFound:
+						TideApprovalFilter.SetTideChallenge(context, code.ToString(), "Enclave-Resource-Delegation-Signature header required");
+						break;
+					default:
+						DPoPExchangeApprovalFilter.SetChallenge(context, code.ToString(), "Resource delegation required");
+						break;
+				}
+			}
 		}
-	}
-	public static void SetChallenge(AuthorizationFilterContext context, string? error = null, string? description = null)
-	{
-		var challenge = Constants.DPoP.Error.DPoPScheme;
-		if (error != null)
-		{
-			challenge += $" error=\"{error}\"";
-			if (description != null)
-				challenge += $", error_description=\"{description}\"";
-		}
-		context.HttpContext.Response.Headers[Constants.DPoP.WWWAuthenticateHeader] = challenge;
 	}
 }
 
-internal class TideEnclaveApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgardCache asgardCache, ILogger<DPoPExchangeApprovalFilter> logger, TimeSpan proofValidityWindow) : DPoPExchangeApprovalFilter(deviceKeyProvider, asgardCache, logger, proofValidityWindow)
+internal class TideApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgardCache asgardCache, ILogger<DPoPExchangeApprovalFilter> logger, TimeSpan proofValidityWindow) : DPoPExchangeApprovalFilter(deviceKeyProvider, asgardCache, logger, proofValidityWindow)
 {
     public override async Task OnAuthorizationAsync(AuthorizationFilterContext context)
 	{
 		await base.OnAuthorizationAsync(context);
 
-		if(context.Result != null) return; // in case there was a REALLY bad error, we won't even validate the stuff below and just return that result
-
 		// Check if we've already got an exchanged token in cache
-		var jti = context.HttpContext.User.FindFirst("jti")?.Value;
-		var existingDoken = jti != null ? await _cache.GetApplicationToken("tide-doken:" + jti) : null;
+		var tokenId = context.HttpContext.User.GetId();
+		var existingDoken = await _cache.GetApplicationTideDoken("tide-doken:" + tokenId);
 		if (existingDoken != null) return; // short circuit! if we already have an exchanged token in the cache we don't need to resource delegation stuff
 
 		if (!context.HttpContext.Request.Headers.TryGetValue("Enclave-Resource-Delegation-Signature", out var enclaveDelegationSignature))
 		{
-			Helpers.RequestResourceDelegation(context, jti, _deviceKeyProvider);
+			Helpers.RequestResourceDelegation(context, tokenId, _deviceKeyProvider, AsgardErrorCode.TideEnclaveApprovalNotFound);
 			context.HttpContext.Response.Headers["Require-Tide-Delegation"] = "true";
 			context.Result = new UnauthorizedResult();
 			return;
@@ -116,25 +112,25 @@ internal class TideEnclaveApprovalFilter(IResourceKeyProvider deviceKeyProvider,
 		var tideSessionKeyValue = context.HttpContext.User.FindFirst("t.ssk")?.Value;
 		if(tideSessionKeyValue == null)
 		{
-			Helpers.SetChallenge(context, AsgardErrorCode.TideSessionKeyNotFound.ToString());
+			SetTideChallenge(context, AsgardErrorCode.TideSessionKeyNotFound.ToString());
 			context.Result = new UnauthorizedResult();
 			return;
 		}
 
-		if(!context.HttpContext.Items.TryGetValue("ValidatedDPoPResourceDelegationProof", out var delegationProof))
+		if(!context.HttpContext.Items.TryGetValue("ValidatedDPoPResourceDelegationProof", out var enclaveDelegationProof))
 		{
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			SetTideChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
 			context.Result = new UnauthorizedResult();
 			return;
 		}
 		JsonWebToken delegationToken;
 		try
 		{
-			delegationToken = TokenHandler.ReadJsonWebToken(delegationProof as string);
+			delegationToken = TokenHandler.ReadJsonWebToken(enclaveDelegationProof as string);
 		}
 		catch
 		{
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			SetTideChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
 			context.Result = new UnauthorizedResult();
 			return;
 		}
@@ -152,33 +148,34 @@ internal class TideEnclaveApprovalFilter(IResourceKeyProvider deviceKeyProvider,
 			);
 		}catch
 		{
-			Helpers.SetChallenge(context, AsgardErrorCode.TideSessionKeyError.ToString());
+			SetTideChallenge(context, AsgardErrorCode.TideSessionKeyError.ToString());
 			context.Result = new UnauthorizedResult();
 			return;
 		}
 
-		if(DelayedResult != null)
+		context.HttpContext.Items["ValidatedTideDelegationSignature"] = enclaveDelegationSignature.ToString();
+	}
+	public static void SetTideChallenge(AuthorizationFilterContext context, string? error = null, string? description = null)
+	{
+		var challenge = "Tide";
+		if (error != null)
 		{
-			// if base validation failed easy - don't allow filter to pass through
-			// we need DelayedResult so we can check if Enclave-Resource-Delegation-Signature is required in the same http request
-			// saves the client having to initally do a DPoP check, go back, then do ANOTHER enclave check, go back, then succeed
-			// this way we find out all the things required in one call
-			context.Result = DelayedResult;
-			return;
+			challenge += $" error=\"{error}\"";
+			if (description != null)
+				challenge += $", error_description=\"{description}\"";
 		}
+		context.HttpContext.Response.Headers[Constants.DPoP.WWWAuthenticateHeader] = challenge;
 	}
 }
 
-internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
+internal class DPoPExchangeApprovalFilter : IAsyncAuthorizationFilter
 {
 	protected static readonly JsonWebTokenHandler TokenHandler = new();
 	private readonly TimeSpan _proofValidityWindow;
 	private static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(30);
-	private readonly IResourceKeyProvider _deviceKeyProvider;
+	protected readonly IResourceKeyProvider _deviceKeyProvider;
 	private readonly ILogger<DPoPExchangeApprovalFilter> _logger;
-	private readonly IAsgardCache _cache;
-
-    public IActionResult? DelayedResult { get; set; }
+	protected readonly IAsgardCache _cache;
 
     public DPoPExchangeApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgardCache asgardCache, ILogger<DPoPExchangeApprovalFilter> logger, TimeSpan proofValidityWindow)
 	{
@@ -193,20 +190,19 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		if (context.HttpContext.User.Identity?.IsAuthenticated != true)
 		{
 			_logger.LogWarning("DPoP exchange approval failed: request is not authenticated");
-			Helpers.SetChallenge(context);
+			SetChallenge(context);
 			context.Result = new UnauthorizedResult();
 			return;
 		}
 
 		// Check if we've already got an exchanged token in cache
-		var jti = context.HttpContext.User.FindFirst("jti")?.Value;
-		var existingToken = jti != null ? await _cache.GetApplicationToken(jti) : null;
+		var existingToken = await _cache.GetApplicationToken(context.HttpContext.User.GetId());
 		if (existingToken != null) return; // short circuit! if we already have an exchanged token in the cache we don't need to resource delegation stuff
 
 		if (!context.HttpContext.Request.Headers.TryGetValue("DPoP-Resource-Delegation", out var dpopResourceDelegation))
 		{
-			Helpers.RequestResourceDelegation(context, jti, _deviceKeyProvider);
-			DelayedResult = new UnauthorizedResult();
+			Helpers.RequestResourceDelegation(context, context.HttpContext.User.GetId(), _deviceKeyProvider);
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
@@ -220,8 +216,8 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		catch (Exception ex)
 		{
 			_logger.LogWarning(ex, "DPoP exchange approval failed: unable to parse resource delegation token");
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
@@ -229,8 +225,8 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		if (delegationToken.Typ != "delegation+jwt")
 		{
 			_logger.LogWarning("DPoP exchange approval failed: invalid token type '{Typ}', expected delegation+jwt", delegationToken.Typ);
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
@@ -241,8 +237,8 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		if (issuedAt == DateTime.MinValue)
 		{
 			_logger.LogWarning("DPoP exchange approval failed: resource delegation token is missing iat");
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
@@ -250,8 +246,8 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		if (issuedAt > now + ClockSkew)
 		{
 			_logger.LogWarning("DPoP exchange approval failed: resource delegation token iat is in the future (iat: {IssuedAt:O})", issuedAt);
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
@@ -259,8 +255,8 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		if (now - issuedAt > _proofValidityWindow + ClockSkew)
 		{
 			_logger.LogWarning("DPoP exchange approval failed: resource delegation token has expired (iat: {IssuedAt:O}, window: {Window})", issuedAt, _proofValidityWindow);
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
@@ -275,8 +271,8 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		catch (Exception ex)
 		{
 			_logger.LogWarning(ex, "DPoP exchange approval failed: missing or malformed jwk header in resource delegation token");
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 		var validationParameters = new TokenValidationParameters
@@ -290,13 +286,24 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 			ValidAlgorithms = new DPoPOptions().TokenValidationParameters.ValidAlgorithms
 		};
 
-		var result = await TokenHandler.ValidateTokenAsync(dpopResourceDelegation, validationParameters);
+		TokenValidationResult result;
+		try
+		{
+			result = await TokenHandler.ValidateTokenAsync(dpopResourceDelegation, validationParameters);
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "DPoP exchange approval failed: DPoP resource delegation token validation failed due to null value or malformed token");
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
+			return;
+		}
 
 		if (!result.IsValid)
 		{
 			_logger.LogWarning(result.Exception, "DPoP exchange approval failed: invalid resource delegation token signature");
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
@@ -309,16 +316,16 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		catch (Exception ex)
 		{
 			_logger.LogWarning(ex, "DPoP exchange approval failed: missing or malformed deleg.jkt claim in resource delegation token");
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
-		var localDevicePublicKeyThumbprint = SHA256.HashData(_deviceKeyProvider.GetResourceKey().ToSubjectPublicKeyInfoBytes());
+		var localDevicePublicKeyThumbprint = SHA256.HashData(_deviceKeyProvider.GetResourceKey().IdentitySRK.ToSubjectPublicKeyInfoBytes());
 		if (attestedResourcePublicKeyThumbprint.SequenceEqual(localDevicePublicKeyThumbprint) == false)
 		{
 			_logger.LogWarning("DPoP exchange approval failed: resource delegation token does not match this resource's device key");
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
@@ -333,8 +340,8 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		catch (Exception ex)
 		{
 			_logger.LogWarning(ex, "DPoP exchange approval failed: access token has no valid cnf.jkt confirmation claim");
-			Helpers.SetChallenge(context, Constants.DPoP.Error.Code.InvalidToken, Constants.DPoP.Error.Description.CnfClaimMissing);
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, Constants.DPoP.Error.Code.InvalidToken, Constants.DPoP.Error.Description.CnfClaimMissing);
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
@@ -343,11 +350,22 @@ internal class DPoPExchangeApprovalFilter : IChainedAuthorizationFilter
 		if (delegationThumbprint.SequenceEqual(dpopKeyThumbprint) == false)
 		{
 			_logger.LogWarning("DPoP exchange approval failed: access token cnf.jkt does not match resource delegation token signing key");
-			Helpers.SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
-			DelayedResult = new UnauthorizedResult();
+			SetChallenge(context, AsgardErrorCode.DPoPDelegationInvalid.ToString());
+			context.Result = new UnauthorizedResult();
 			return;
 		}
 
 		context.HttpContext.Items["ValidatedDPoPResourceDelegationProof"] = dpopResourceDelegation.ToString();
+	}
+	public static void SetChallenge(AuthorizationFilterContext context, string? error = null, string? description = null)
+	{
+		var challenge = Constants.DPoP.Error.DPoPScheme;
+		if (error != null)
+		{
+			challenge += $" error=\"{error}\"";
+			if (description != null)
+				challenge += $", error_description=\"{description}\"";
+		}
+		context.HttpContext.Response.Headers[Constants.DPoP.WWWAuthenticateHeader] = challenge;
 	}
 }
