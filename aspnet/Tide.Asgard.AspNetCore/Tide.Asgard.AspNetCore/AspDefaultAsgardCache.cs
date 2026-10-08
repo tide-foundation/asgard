@@ -14,10 +14,13 @@ public class AspDefaultAsgardCache : BaseAsgardCache
 	private static readonly ConcurrentDictionary<string, (ReadOnlyMemory<byte> policy, DateTime ttl)> _policies = new();
 	private static readonly ConcurrentDictionary<string, (string token, DateTime ttl)> _applicationTokens = new();
 	private static readonly ConcurrentDictionary<string, (string token, DateTime ttl)> _applicationTideDokens = new();
+	private readonly IHttpContextAccessor _httpContextAccessor;
+
 
 	public AspDefaultAsgardCache(IHttpContextAccessor httpContextAccessor, ILogger<AspDefaultAsgardCache> logger, IPolicyProvider provider) : base(provider)
 	{
-		var authHeader = httpContextAccessor.HttpContext?.Request.Headers.Authorization.ToString();
+		_httpContextAccessor = httpContextAccessor;
+		var authHeader = _httpContextAccessor.HttpContext?.Request.Headers.Authorization.ToString();
 		if (!string.IsNullOrWhiteSpace(authHeader))
 		{
 			if (!authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
@@ -51,6 +54,7 @@ public class AspDefaultAsgardCache : BaseAsgardCache
 	public override async Task<ReadOnlyMemory<byte>> GetPolicy(string id)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(id, nameof(id));
+		await EnsurePolicyProviderAuthenticated();
 		if (_policies.TryGetValue(id, out var policy))
 		{
 			if (policy.ttl < DateTime.UtcNow)
@@ -65,6 +69,7 @@ public class AspDefaultAsgardCache : BaseAsgardCache
 	}
 	public override async Task<ReadOnlyMemory<byte>> UpdatePolicy(string id)
 	{
+		await EnsurePolicyProviderAuthenticated();
 		ReadOnlyMemory<byte>? fetchedPolicy = await PolicyProvider.GetPolicy(id);
 		if (fetchedPolicy == null)
 		{
@@ -132,5 +137,15 @@ public class AspDefaultAsgardCache : BaseAsgardCache
 
 		_applicationTideDokens[id] = (doken, expiry);
 		return Task.CompletedTask;
+	}
+
+	private async Task EnsurePolicyProviderAuthenticated()
+	{
+		if(PolicyProvider.isAuthenticated) return;
+		string authenticatedUserId;
+		if (_httpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated == false) return;
+		authenticatedUserId = _httpContextAccessor.HttpContext?.User?.GetId() ?? throw new InvalidOperationException("Could not find authenticated user id in http context");
+		string applicationToken = await GetApplicationToken(authenticatedUserId) ?? throw new InvalidOperationException("Could not find application token in cache");
+		PolicyProvider.SetAuthentication(applicationToken);
 	}
 }

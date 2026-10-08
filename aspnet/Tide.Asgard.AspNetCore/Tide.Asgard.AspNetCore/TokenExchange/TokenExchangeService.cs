@@ -1,6 +1,9 @@
-﻿using Cryptide.Key;
+﻿using Cryptide;
+using Cryptide.Key;
+using Cryptide.Tools;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.VisualBasic;
@@ -33,12 +36,19 @@ public enum ResourceAuthenticationMode
 }
 public interface ITokenExchangeService
 {
-	Task<string> ExchangeToken(string requestingClientId, string? requestedAudience = null);
+	Task<TokenExchangeResponse> ExchangeToken();
+	Task<TokenExchangeResponse> ExchangeToken(string requestingClientId, string? requestedAudience = null);
 }
-public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccessor httpContextAccessor, IResourceKeyProvider resourceKeyProvider) : ITokenExchangeService
+public record TokenExchangeResponse(string ApplicationAccessToken, string? ApplicationDoken, DateTime ExpiresAt);
+public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccessor httpContextAccessor, IConfiguration config, IAsgardCache cache) : ITokenExchangeService
 {
 	private HttpContext GetHttpContext() => httpContextAccessor.HttpContext ?? throw new InvalidOperationException($"HTTP context is not available. Ensure {nameof(TokenExchangeService)} is only used in Controllers");
-	public async Task<string> ExchangeToken(string requestingClientId, string? requestedAudience = null)
+	public async Task<TokenExchangeResponse> ExchangeToken()
+	{
+		var requestingClientId = config.GetSection("Keycloak")["resource"] ?? throw new InvalidOperationException("Keycloak resource is not configured in appsettings.json");
+		return await ExchangeToken(requestingClientId);
+	}
+	public async Task<TokenExchangeResponse> ExchangeToken(string requestingClientId, string? requestedAudience = null)
 	{
 		var context = GetHttpContext();
 		if (context.User.Identity?.IsAuthenticated != true)
@@ -63,7 +73,7 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 	/// Looks at the DPoP Header
 	/// </summary>
 	/// <returns></returns>
-	private async Task<string> ExchangeDPoPToken(string requestingClientId, string? requestedAudience = null)
+	private async Task<TokenExchangeResponse> ExchangeDPoPToken(string requestingClientId, string? requestedAudience = null)
 	{
 		var context = GetHttpContext();
 		if(!context.Items.TryGetValue("ValidatedDPoPResourceDelegationProof", out var dpopProofItem))
@@ -86,19 +96,10 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 
 		var client = factory.CreateClient("Tidecloak");
 
-		if(context.Items.TryGetValue("ValidatedTideEnclaveApproval", out var tideEnclaveApprovalItem))
+		string? approverDelegationSignature = null;
+		if (context.Items.TryGetValue("ValidatedTideDelegationSignature", out var tideEnclaveApprovalItem))
 		{
-			// Means the user provided a SessionKeyApproval -> we need to create an ephemeral EdDSA key to tie the resulting doken to.
-
-			// Generate EdDSA key
-			var ephemeralEdDSAKey = TideKey.NewKey();
-
-			// Approve EdDSA key with current P-256 resource key
-			var currentResourceKey = resourceKeyProvider.GetResourceKey();
-
-			// how can i get the current resource key? DeviceKeyProvider?
-
-			// Add approval to actor_token param
+			approverDelegationSignature = tideEnclaveApprovalItem!.ToString() ?? throw new InvalidOperationException("Invalid tide delegation signature.");
 		}
 
 		var forms = new Dictionary<string, string>
@@ -110,6 +111,7 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 			["actor_token"] = dpopProof,
 			["actor_token_type"] = "urn:ietf:params:oauth:token-type:delegation+jwt"
 		};
+		if (approverDelegationSignature != null) forms["tide_delegation"] = approverDelegationSignature;
 		if (requestedAudience != null) forms["audience"] = requestedAudience;
 		var body = new FormUrlEncodedContent(forms);
 
@@ -129,8 +131,29 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 		if (!result.TryGetProperty("access_token", out var token))
 			throw new InvalidOperationException("Token exchange response did not contain an access_token.");
 
-		Console.WriteLine(token.GetString()!);
+		string accessToken = token.GetString() ?? throw new InvalidOperationException("Token exchange response contained a null access_token.");
 
-		return token.GetString()!;
+		Console.WriteLine($"Token exchange response contained an access_token: {accessToken}");
+
+		if (!result.TryGetProperty("expires_in", out var expiresIn))
+			throw new InvalidOperationException("Token exchange response did not contain an expires_in.");
+
+		var expiresAt = DateTime.UtcNow.AddSeconds(expiresIn.GetInt32());
+
+		// add tokens to cache
+		var tokenId = context.User.GetId();
+
+		await cache.AddApplicationToken(tokenId, accessToken, expiresAt);
+
+		string? applicationDoken = null;
+		if (result.TryGetProperty("doken", out var doken))
+		{
+			Console.WriteLine($"Token exchange response contained a doken: {doken.GetString()}");
+			// add doken to cache
+			applicationDoken = doken.GetString()!;
+			await cache.AddApplicationTideDoken(tokenId, applicationDoken, expiresAt);
+		}
+
+		return new TokenExchangeResponse(accessToken, applicationDoken, expiresAt);
 	}
 }

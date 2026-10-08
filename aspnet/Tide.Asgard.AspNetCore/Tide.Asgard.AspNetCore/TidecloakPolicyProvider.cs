@@ -17,6 +17,7 @@ public class TidecloakPolicyProvider(IHttpClientFactory factory) : IPolicyProvid
 	private string? _baseUrl;
 	private string? _realm;
 	private string? TidecloakToken { get; set; }
+	public bool isAuthenticated => !string.IsNullOrEmpty(TidecloakToken);
 	public void SetAuthentication(string authentication)
 	{
 		// ensure authentication is a token
@@ -142,7 +143,11 @@ public class TidecloakPolicyProvider(IHttpClientFactory factory) : IPolicyProvid
 
 		var client = factory.CreateClient("Tidecloak");
 		using var response = await client.SendAsync(request);
-		response.EnsureSuccessStatusCode();
+		if(!response.IsSuccessStatusCode)
+		{
+			var errorContent = await response.Content.ReadAsStringAsync();
+			throw new Exception($"Failed to add policy. Status code: {response.StatusCode}, Content: {errorContent}");
+		}
 
 		using var stream = await response.Content.ReadAsStreamAsync();
 		var result = await JsonSerializer

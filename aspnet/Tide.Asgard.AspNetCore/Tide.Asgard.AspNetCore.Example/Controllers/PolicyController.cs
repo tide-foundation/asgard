@@ -12,32 +12,32 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 	[ApiController]
 	[RequireExchangeApproval(ApprovalRequirement.DPoP)]
 	[Route("[controller]")]
-	public class PolicyController(IConfiguration config, TidecloakPolicyProvider policyProvider, ITokenExchangeService tokenExchangeService, IAsgardCache cache) : Controller
+	public class PolicyController(IAspAsgardService asgardService, TidecloakPolicyProvider policyProvider) : Controller
 	{
+		private static readonly string PolicyId = Guid.NewGuid().ToString();
+
 		[HttpGet("Create")]
 		public async Task<IActionResult> Create()
 		{
-			var userJti = User.FindFirst("jti")?.Value!;
-			var token = await cache.GetApplicationToken(userJti);
-			if (token == null)
-			{
-				token = await tokenExchangeService.ExchangeToken(config.GetSection("Keycloak")["resource"]!);
-				await cache.AddApplicationToken(userJti, token, DateTime.UtcNow.AddMinutes(5));
-			}
+			var token = await asgardService.GetApplicationAccessToken();
 
 			policyProvider.SetAuthentication(token);
 
-			var policyBuiler = new PolicyBuilder("vendorid", "GenericRealmAccessThresholdRole:1");
+			// check the policy hasn't already been created
+			if(await policyProvider.GetPolicy(PolicyId) != null)
+			{
+				return Ok("Policy already exists");
+			}
 
-			policyBuiler.AllowPublicUse();
+			var policyBuiler = new PolicyBuilder(asgardService.GetSettings().VendorId, "SimpleTagBasedDecryption:1");
+
 			policyBuiler.BypassExplicitUserConsent();
 			policyBuiler.UseForEncyption();
-			policyBuiler.AddParameter("role", "test-role");
-			policyBuiler.AddParameter("threshold", 1);
 
-			var CRid = await policyProvider.AddPolicyWithChangeRequest("test-policy", policyBuiler.BuildPolicy());
+			var CRid = await policyProvider.AddPolicyWithChangeRequest(PolicyId, policyBuiler.BuildPolicy());
 
 			return Ok(CRid);
 		}
+		public static string GetPolicyId() => PolicyId;
 	}
 }

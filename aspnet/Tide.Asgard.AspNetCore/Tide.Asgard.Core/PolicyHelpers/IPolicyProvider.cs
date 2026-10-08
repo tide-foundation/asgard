@@ -10,6 +10,7 @@ namespace Tide.Asgard.Core.PolicyHelpers;
 
 public interface IPolicyProvider
 {
+	bool isAuthenticated { get; }
 	Task<IReadOnlyDictionary<string, ReadOnlyMemory<byte>>> GetAllPolicies();
 	Task<ReadOnlyMemory<byte>?> GetPolicy(string id);
 	void SetAuthentication(string authentication);

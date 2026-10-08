@@ -49,8 +49,10 @@ public static class ServiceCollectionExtensions
 		ResourceAuthenticationMode resourceAuthMode
 		)
 	{
-		var keyPath = asgardConfiguration.GetSection("Keycloak")["private_key_path"] ?? Utils.RESOURCE_KEY_DEFAULT_PATH;
-		return AddAsgard(services, asgardConfiguration, new FileResourceKeyProvider(keyPath), resourceAuthMode);
+		var identityKeyPath = asgardConfiguration.GetSection("Keycloak")["identity_key_path"] ?? Utils.RESOURCE_KEY_DEFAULT_PATH;
+		var tideKeyPath = asgardConfiguration.GetSection("Keycloak")["tide_key_path"] ?? Utils.TIDE_KEY_DEFAULT_PATH;
+
+		return AddAsgard(services, asgardConfiguration, new FileResourceKeyProvider(identityKeyPath, tideKeyPath), resourceAuthMode);
 	}
 	/// <summary>
 	/// Default implementation of Asgard registration. Uses the provided IDeviceKeyProvider to store the device key.
@@ -75,16 +77,23 @@ public static class ServiceCollectionExtensions
 		var tideClientManagerProvider = new TideClientManagerProvider(
 			baseRealmUrl,
 			resourceKeyProvider,
-			config["homeOrkUrl"],
-			config["networkThreshold"] == null ? null : int.Parse(config["networkThreshold"]!)
+			config.GetSection("Keycloak")["homeOrkUrl"],
+			config.GetSection("Keycloak")["thresholdT"] == null ? null : int.Parse(config.GetSection("Keycloak")["thresholdT"]!)
 			);
 		services.AddSingleton(tideClientManagerProvider);
+
+		var asgardSettings = new AsgardSettings(
+			GetClientId(config.GetSection("Keycloak")),
+			GetRealm(config.GetSection("Keycloak")),
+			config.GetSection("Keycloak")["vendorId"] ?? throw new InvalidOperationException("Missing required configuration: vendorId")
+		);
+		services.AddSingleton(asgardSettings);
 
 		// add http context accessor
 		services.AddHttpContextAccessor();
 
 		// add token exchange service
-		services.TryAddSingleton<ITokenExchangeService, TokenExchangeService>();
+		services.TryAddScoped<ITokenExchangeService, TokenExchangeService>();
 
 		// add default cache service
 		services.AddScoped<IAsgardCache, AspDefaultAsgardCache>();
@@ -147,9 +156,9 @@ public static class ServiceCollectionExtensions
 			case ResourceAuthenticationMode.MTLS:
 				// no enrollment in this mode - the credentials have to be on disk already, so a missing identity is a
 				// deployment error rather than something to wait for
-				var identity = LoadResourceIdentity(configurationSection, paths, resourceKeyProvider.GetResourceKey())
+				var identity = LoadResourceIdentity(configurationSection, paths, resourceKeyProvider.GetResourceKey().IdentitySRK)
 					?? throw new InvalidOperationException($"{ResourceAuthenticationMode.MTLS} requires a signed certificate at '{paths.CertificatePath}' and a root CA at '{paths.RootCaPath}'. Use {ResourceAuthenticationMode.AutoMTLSEnrollment} to enroll them.");
-				register.Register(CreateClientCertificate(identity.Certificate, resourceKeyProvider.GetResourceKey()), identity.TrustBundle);
+				register.Register(CreateClientCertificate(identity.Certificate, resourceKeyProvider.GetResourceKey().IdentitySRK), identity.TrustBundle);
 				break;
 			default:
 				throw new NotSupportedException($"Unsupported {nameof(ResourceAuthenticationMode)}: {authMode}");
@@ -172,7 +181,7 @@ public static class ServiceCollectionExtensions
 
 		if (identity == null) return false;
 
-		register.Register(CreateClientCertificate(identity.Certificate, resourceKeyProvider.GetResourceKey()), identity.TrustBundle);
+		register.Register(CreateClientCertificate(identity.Certificate, resourceKeyProvider.GetResourceKey().IdentitySRK), identity.TrustBundle);
 		return true;
 	}
 
@@ -184,10 +193,10 @@ public static class ServiceCollectionExtensions
 	/// </summary>
 	private static async Task<ResourceIdentity?> EnrollResourceIdentity(IConfigurationSection configurationSection, string baseRealmUrl, ResourceIdentityPaths paths, IResourceKeyProvider resourceKeyProvider)
 	{
-		var resourceKey = GetOrCreateResourceKey(resourceKeyProvider);
+		var (identityKey, tideKey) = GetOrCreateResourceKey(resourceKeyProvider);
 
 		// enrolled on an earlier run - nothing to do
-		var existingIdentity = LoadResourceIdentity(configurationSection, paths, resourceKey);
+		var existingIdentity = LoadResourceIdentity(configurationSection, paths, identityKey);
 		if (existingIdentity != null) return existingIdentity;
 
 		using var httpClient = new HttpClient();
@@ -198,8 +207,11 @@ public static class ServiceCollectionExtensions
 		{
 			var enrollmentToken = configurationSection["enrollment_token"] ?? throw new InvalidOperationException("'enrollment_token' required in configuration");
 
-			using var signingKey = ToECDsa(resourceKey);
+			using var signingKey = ToECDsa(identityKey);
 			var certificateRequest = new CertificateRequest(new X500DistinguishedName($"CN=client_{GetClientId(configurationSection)}"), signingKey, HashAlgorithmName.SHA256);
+
+			// add tide key as subjectAltPublicKeyInfo
+			certificateRequest.CertificateExtensions.Add(new X509Extension(new Oid("2.5.29.72"), tideKey.ToSubjectPublicKeyInfoBytes(), critical: false)); // OID for subjectAltPublicKeyInfo
 
 			httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", enrollmentToken);
 			var enrollResponse = await httpClient.PostAsync(baseRealmUrl + "tide-server-identity/request", new StringContent(certificateRequest.CreateSigningRequestPem()));
@@ -220,7 +232,7 @@ public static class ServiceCollectionExtensions
 		}
 
 		// requested, but not collected yet -> ask Tidecloak whether it has been signed
-		var statusResponse = await httpClient.GetAsync(baseRealmUrl + $"tide-server-identity/status?fingerprint={Uri.EscapeDataString(GetResourceKeyFingerprint(resourceKey))}");
+		var statusResponse = await httpClient.GetAsync(baseRealmUrl + $"tide-server-identity/status?fingerprint={Uri.EscapeDataString(GetResourceKeyFingerprint(identityKey))}");
 		if (!statusResponse.IsSuccessStatusCode)
 		{
 			throw statusResponse.StatusCode switch
@@ -239,7 +251,7 @@ public static class ServiceCollectionExtensions
 
 		var certificate = X509Certificate2.CreateFromPem(resourceIdentityResponse.GetCertificate());
 		var trustBundle = X509Certificate2.CreateFromPem(resourceIdentityResponse.GetRootCa());
-		VerifyResourceIdentity(certificate, trustBundle, configurationSection, resourceKey);
+		VerifyResourceIdentity(certificate, trustBundle, configurationSection, identityKey);
 
 		File.WriteAllBytes(paths.CertificatePath, certificate.Export(X509ContentType.Cert));
 		File.WriteAllBytes(paths.RootCaPath, trustBundle.Export(X509ContentType.Cert));
@@ -326,7 +338,7 @@ public static class ServiceCollectionExtensions
 	/// The resource key, minting and persisting one on first run. The provider is the single source of truth for it -
 	/// the certificate and trust bundle on disk are only ever read back against whatever key it holds.
 	/// </summary>
-	private static TideKey GetOrCreateResourceKey(IResourceKeyProvider resourceKeyProvider)
+	private static (TideKey IdentitySRK, TideKey TideSRK) GetOrCreateResourceKey(IResourceKeyProvider resourceKeyProvider)
 	{
 		try
 		{
@@ -334,9 +346,10 @@ public static class ServiceCollectionExtensions
 		}
 		catch (FileNotFoundException)
 		{
-			var resourceKey = TideKey.NewKey(TideComponentSchemeType.P256);
-			resourceKeyProvider.SetResourceKey(resourceKey);
-			return resourceKey;
+			var identityKey = TideKey.NewKey(TideComponentSchemeType.P256);
+			var tideKey = TideKey.NewKey(TideComponentSchemeType.Ed25519);
+			resourceKeyProvider.SetResourceKey(identityKey, tideKey);
+			return (identityKey, tideKey);
 		}
 	}
 

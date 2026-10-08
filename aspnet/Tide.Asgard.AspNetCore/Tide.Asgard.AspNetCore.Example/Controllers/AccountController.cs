@@ -14,26 +14,32 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 	[Route("[controller]")]
 	public class AccountController(IAspAsgardService asgardService) : ControllerBase
 	{
-		[HttpGet]
+		private static (ReadOnlyMemory<byte> dob, ReadOnlyMemory<byte> name)? EncryptedData;
+		[HttpGet("Encrypt")]
 		public async Task<IActionResult> EncryptAccount() 
 		{
+			if(EncryptedData is not null)
+			{
+				return Ok(EncryptedData.Value.dob);
+			}
+
 			// set up encryption options
 			var lockOptions = new LockOptions()
 				.AddItemToLock(new ItemToLock
 				{
 					ItemId = "id1",
-					Tags = ["staff data", "date of birth"],
-					Data = Encoding.UTF8.GetBytes("hello!"),
+					Tags = ["staff", "date of birth"],
+					Data = Encoding.UTF8.GetBytes("10/05/1990"),
 				})
 				.AddItemToLock(new ItemToLock
 				{
 					ItemId = "id2",
-					Tags = ["staff data", "date of birth"],
-					Data = Encoding.UTF8.GetBytes("hellsssso!"),
+					Tags = ["staff", "name"],
+					Data = Encoding.UTF8.GetBytes("Janet"),
 				});
 
 			LockResponse response = await asgardService.CreateLockContext(lockOptions)
-				.UsePolicy("vendor:user1:assessment1:policy1")
+				.UsePolicy(PolicyController.GetPolicyId())
 				.Lock();
 
 			// get the cipher from the encrypted response
@@ -41,11 +47,13 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 
 			var cipher2 = response.GetLockedItemById("id2").Cipher;
 
-			var cipherButDifferentFetch = response.LockedItems.First().Cipher;
+			EncryptedData = (cipher, cipher2);
+
+			//var cipherButDifferentFetch = response.LockedItems.First().Cipher;
 
 			// if i want to contact another asgard enabled service
-			var client = asgardService.GetHttpClient();
-			await client.GetAsync("");
+			//var client = asgardService.GetHttpClient();
+			//await client.GetAsync("");
 
 			return Ok(cipher);
 		}

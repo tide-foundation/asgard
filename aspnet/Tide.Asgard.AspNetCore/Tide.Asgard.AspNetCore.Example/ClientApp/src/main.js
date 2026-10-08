@@ -1,4 +1,6 @@
-import { TideCloak as Tidecloak } from "@tidecloak/js";
+import { IAMService } from "@tidecloak/js";
+import config from "../public/keycloak.json";
+
 
 const $ = (id) => document.getElementById(id);
 
@@ -9,23 +11,25 @@ const btnLogin = $("btn-login");
 const btnPolicySetup = $("btn-setup-policy");
 const btnLogout = $("btn-logout");
 const btnCallApi = $("btn-call-api");
+const btnEncryptAccount = $("btn-encrypt-account");
 
 function log(msg) {
   resultEl.style.display = "block";
   resultEl.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
 }
 
-function showAuthenticated(kc) {
+function showAuthenticated() {
   statusEl.textContent = "Authenticated (DPoP)";
   statusEl.style.color = "green";
   userInfoEl.style.display = "block";
-  $("user-name").textContent = kc.tokenParsed?.preferred_username || kc.tokenParsed?.sub || "N/A";
-  $("user-email").textContent = kc.tokenParsed?.email || "N/A";
-  $("token-type").textContent = kc.tokenParsed ? "DPoP" : "Unknown";
+  $("user-name").textContent = IAMService.getName() || IAMService.getClaim("sub") || "N/A";
+  $("user-email").textContent = IAMService.getClaim("email") || "N/A";
+  $("token-type").textContent = IAMService.getToken() ? "DPoP" : "Unknown";
   btnLogin.style.display = "none";
   btnLogout.style.display = "inline-block";
   btnCallApi.style.display = "inline-block";
   btnPolicySetup.style.display = "inline-block";
+  btnEncryptAccount.style.display = "inline-block";
 }
 
 function showUnauthenticated() {
@@ -36,14 +40,15 @@ function showUnauthenticated() {
   btnLogout.style.display = "none";
   btnCallApi.style.display = "none";
   btnPolicySetup.style.display = "none";
+  btnEncryptAccount.style.display = "none";
 }
 
-async function setupPolicy(kc) {
+async function setupPolicy() {
     log("Setting up policy...");
 
-    const response = await kc.secureFetch('http://localhost:3000/policy/create', {
+    const response = await IAMService.fetch('http://localhost:3000/policy/create', {
         headers: {
-            Authorization: `Bearer ${kc.token}`,
+            Authorization: `Bearer ${IAMService.getToken()}`,
         },
     });
 
@@ -52,21 +57,49 @@ async function setupPolicy(kc) {
     log(text);
 }
 
-async function callHelloEndpoint(kc) {
-  log("Calling /Hello with DPoP via secureFetch...");
+async function callHelloEndpoint() {
+  log("Calling /Hello with DPoP via IAMService.fetch...");
 
   try {
     // Re-login if token has expired (no refresh token available with check-sso)
-    if (!kc.token) {
+    if (!IAMService.getToken()) {
       log("Token expired, re-authenticating...");
-      await kc.login();
+      await IAMService.doLogin();
       return;
     }
 
     const url = `${window.location.origin}/Hello`;
-    const response = await kc.secureFetch(url, {
+    const response = await IAMService.fetch(url, {
       headers: {
-        Authorization: `Bearer ${kc.token}`,
+        Authorization: `Bearer ${IAMService.getToken()}`,
+      },
+    });
+
+    const status = response.status;
+    const text = await response.text();
+
+    if (response.ok) {
+      log(`SUCCESS (${status}): ${text}`);
+    } else {
+      log(`FAILED (${status}): ${text}`);
+      const wwwAuth = response.headers.get("WWW-Authenticate");
+      if (wwwAuth) {
+        log(`WWW-Authenticate: ${wwwAuth}`);
+      }
+    }
+  } catch (err) {
+    log(`ERROR: ${err.message}`);
+  }
+}
+
+async function encryptAccount() {
+  log("Calling /Account (EncryptAccount) with DPoP via IAMService.fetch...");
+
+  try {
+    const url = `${window.location.origin}/Account/Encrypt`;
+    const response = await IAMService.fetch(url, {
+      headers: {
+        Authorization: `Bearer ${IAMService.getToken()}`,
       },
     });
 
@@ -88,35 +121,35 @@ async function callHelloEndpoint(kc) {
 }
 
 async function init() {
-  const kc = new Tidecloak("keycloak.json");
+  btnLogin.addEventListener("click", () => IAMService.doLogin());
+  btnLogout.addEventListener("click", () => IAMService.doLogout());
+  btnCallApi.addEventListener("click", () => callHelloEndpoint());
+  btnPolicySetup.addEventListener("click", () => setupPolicy());
+  btnEncryptAccount.addEventListener("click", () => encryptAccount());
 
-  btnLogin.addEventListener("click", () => kc.login());
-  btnLogout.addEventListener("click", () => kc.logout());
-  btnCallApi.addEventListener("click", () => callHelloEndpoint(kc));
-  btnPolicySetup.addEventListener("click", () => setupPolicy(kc));
-
-  kc.onTokenExpired = () => {
+  IAMService.on("tokenExpired", () => {
     log("Token expired, attempting refresh...");
-    kc.updateToken(5).then(() => {
+    IAMService.updateToken().then(() => {
       log("Token refreshed successfully");
     }).catch(() => {
       log("Refresh failed, re-authenticating...");
-      kc.login();
+      IAMService.doLogin();
     });
-  };
+  });
 
   try {
     statusEl.textContent = "Initializing Keycloak with DPoP...";
 
-    const authenticated = await kc.init({
+    const authenticated = await IAMService.init(config, {
       onLoad: "login-required",
       checkLoginIframe: false,
-      useDPoP: { mode: "strict", alg: "EdDSA" },
+      setupRequestEnclave: false,
+      dpopConfig: { mode: "strict", alg: "EdDSA" },
     });
 
     if (authenticated) {
       log("Keycloak initialized - user is authenticated with DPoP");
-      showAuthenticated(kc);
+      showAuthenticated();
     } else {
       log("Keycloak initialized - user is not authenticated");
       showUnauthenticated();

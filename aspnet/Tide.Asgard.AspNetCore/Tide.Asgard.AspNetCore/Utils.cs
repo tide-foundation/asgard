@@ -2,6 +2,7 @@
 using Microsoft.IdentityModel.Tokens;
 using System;
 using System.Collections.Generic;
+using System.Security.Claims;
 using System.Text;
 using Tide.Asgard.Core.Crypto.Ed25519;
 
@@ -11,6 +12,7 @@ public static class Utils
 {
 	public const string RESOURCE_CERTIFICATE_DEFAULT_PATH = "./resource.crt";
 	public const string RESOURCE_KEY_DEFAULT_PATH = "./resource.key";
+	public const string TIDE_KEY_DEFAULT_PATH = "./tide.key";
 	public const string RESOURCE_CERTIFICATE_REQUEST_DEFAULT_PATH = "./resource.csr";
 	public const string ROOT_CA_DEFAULT_PATH = "./root.crt";
 	public const int ENROLLMENT_POLL_INTERVAL_DEFAULT_SECONDS = 60;
@@ -54,5 +56,12 @@ public static class Utils
 		};
 		var signingKey = jwk.ToSecurityKey();
 		return signingKey;
+	}
+
+	public static string GetId(this ClaimsPrincipal principal)
+	{
+		if(principal.FindFirst("jti")?.Value is string jti && !string.IsNullOrWhiteSpace(jti))
+			return jti;
+		throw new InvalidOperationException("The ClaimsPrincipal does not contain a 'jti' claim.");
 	}
 }

@@ -11,4 +11,5 @@ public interface IAsgardService
 {
 	ILockContext CreateLockContext(LockOptions lockOptions);
 	// then we'll create Unlock Contexts + Sign Contexts
+	AsgardSettings GetSettings();
 }

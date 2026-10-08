@@ -15,7 +15,8 @@ public class AspAsgardService(
 	IAsgardCache asgardCache,
 	IHttpContextAccessor httpContextAccessor,
 	ITokenExchangeService tokenExchangeService,
-	IHttpClientFactory httpClientFactory
+	IHttpClientFactory httpClientFactory,
+	AsgardSettings asgardSettings
 	) : IAspAsgardService
 {
 	public ILockContext CreateLockContext(LockOptions lockOptions)
@@ -25,4 +26,18 @@ public class AspAsgardService(
 	}
 
 	public HttpClient GetHttpClient() => httpClientFactory.CreateClient("Asgard");
+	public async Task<string> GetApplicationAccessToken()
+	{
+		var context = httpContextAccessor.HttpContext ?? throw new InvalidOperationException($"HTTP context is not available. Ensure {nameof(AspAsgardService)} is only used in Controllers");
+		var tokenId = context.User.GetId();
+		var token = await asgardCache.GetApplicationToken(tokenId);
+		if (token == null)
+		{
+			var resp = await tokenExchangeService.ExchangeToken();
+			token = resp.ApplicationAccessToken;
+			await asgardCache.AddApplicationToken(tokenId, token, resp.ExpiresAt);
+		}
+		return token;
+	}
+	public AsgardSettings GetSettings() => asgardSettings;
 }

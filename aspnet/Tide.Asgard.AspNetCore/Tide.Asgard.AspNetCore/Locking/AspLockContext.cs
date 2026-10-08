@@ -26,38 +26,25 @@ public class AspLockContext(
 	}
 	public async Task<LockResponse> Lock()
 	{
-		if(PolicyId != null) lockOptions.Policy = await asgardCache.GetPolicy(PolicyId);
+		// need to get the application's tide token to initialize the lock manager AND authenticate the cache policy provider (by providing exchanged token in cache)
+		var applicationDoken = await GetApplicationDoken();
 
-		// need to get the application's tide token to initialize the lock manager
-		var userDoken = GetUserTokenFromHttpContext();
-		var userDokenHashId = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(userDoken)));
-
-		string? applicationDoken = await asgardCache.GetApplicationTideDoken(userDokenHashId);
-
-		if (applicationDoken == null)
-		{
-			// exchange the current user's token for a application tide doken
-			applicationDoken = await tokenExchangeService.ExchangeTideDokenForApplicationDoken();
-			var expiry = DateTime.UtcNow.AddMinutes(5); // change later to doken expiry TODO ;; -----------------------------------------------------------------------
-
-			await asgardCache.AddApplicationTideDoken(userDokenHashId, applicationDoken, expiry);
-		}
+		if (PolicyId != null) lockOptions.Policy = await asgardCache.GetPolicy(PolicyId);
 
 		var lockClient = tideClientManagerProvider.GetLockClientManager(applicationDoken);
 		return await lockClient.Lock(lockOptions);
 	}
-	private string GetUserTokenFromHttpContext()
+	private async Task<string> GetApplicationDoken()
 	{
-		var context = httpContextAccessor.HttpContext;
-		if (context == null)
+		var context = httpContextAccessor.HttpContext ?? throw new InvalidOperationException("HttpContext is null");
+
+		var id = context.User.GetId();
+		var existingDoken = await asgardCache.GetApplicationTideDoken(id);
+		if (existingDoken == null)
 		{
-			throw new InvalidOperationException("HttpContext is null");
+			// perform exchange to get a new doken
+			return (await tokenExchangeService.ExchangeToken()).ApplicationDoken ?? throw new Exception("Failed to exchange token for application doken. Response did not include a doken");
 		}
-		var token = context.Request.Headers.Authorization.ToString();
-		if (string.IsNullOrEmpty(token))
-		{
-			throw new InvalidOperationException("Authorization header is missing");
-		}
-		return token.Replace("Doken ", "");
+		else return existingDoken;
 	}
 }

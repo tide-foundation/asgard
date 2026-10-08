@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\project\ork\Ork.Clients\Ork.Clients.csproj" />
+    <ProjectReference Include="..\Tide.Asgard.AspNetCore.DPoP\Tide.Asgard.AspNetCore.DPoP.csproj" />
     <ProjectReference Include="..\Tide.Asgard.Core\Tide.Asgard.Core.csproj" />
   </ItemGroup>
 
