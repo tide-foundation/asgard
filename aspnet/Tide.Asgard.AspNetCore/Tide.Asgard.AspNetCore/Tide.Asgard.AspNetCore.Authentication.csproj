@@ -24,15 +24,14 @@
     <PackageReference Include="Keycloak.AuthServices.Authentication" Version="2.9.0" />
     <PackageReference Include="Keycloak.AuthServices.Authorization" Version="2.9.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\..\..\project\ork\Ork.Clients\Ork.Clients.csproj" />
+    <ProjectReference Include="..\Tide.Asgard.AspNetCore.DPoP\Tide.Asgard.AspNetCore.DPoP.csproj" />
     <ProjectReference Include="..\Tide.Asgard.Core\Tide.Asgard.Core.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="ClientCeritifcation\Views\index.html" />
   </ItemGroup>
 
   <ItemGroup>

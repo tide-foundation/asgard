@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Asgard Test Server</title>
+  </head>
+  <body>
+    <!-- No styling on purpose: only Playwright ever looks at this page. The ids
+         are the contract — keep them stable, everything else is disposable. -->
+    <p>status: <span id="auth-status">init</span></p>
+    <p>user: <span id="user-name">-</span></p>
+
+    <button id="btn-login" hidden>Login</button>
+    <button id="btn-logout" hidden>Logout</button>
+    <button id="btn-call-api" hidden>Call /Hello</button>
+    <button id="btn-exchange" hidden>Call /Hello/exchange</button>
+
+    <pre id="result"></pre>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

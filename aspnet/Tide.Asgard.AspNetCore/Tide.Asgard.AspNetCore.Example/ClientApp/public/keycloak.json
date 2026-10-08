@@ -1,24 +1,34 @@
 {
-  "realm": "test",
+  "realm": "test1",
   "auth-server-url": "http://localhost:8080",
   "ssl-required": "external",
-  "resource": "browser-login-page",
+  "resource": "frontend",
   "public-client": true,
   "confidential-port": 0,
   "jwk": {
     "keys": [
       {
-        "kid": "lQfpu9UmEbiORUienjTlbxiV5teMVbT1neXjEGgd8V4",
+        "kid": "_so5NIbgZ6qwSf3AdVw-4e8mYfJFO7uztTBSDi7p9n0",
         "kty": "OKP",
         "alg": "EdDSA",
         "use": "sig",
         "crv": "Ed25519",
-        "x": "HcYJ2a_4pi-9g5_aVbE4_gZoPIXTlg6IQw-jiuFuifk"
+        "x": "0dm86HYBSEh5GjTw5ItQ1YUxo_Rg1htVvJur4InW90Y"
       }
     ]
   },
-  "backgroundUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/BACKGROUND_IMAGE",
-  "logoUrl": "http://localhost:8080/realms/test/tide-idp-resources/images/LOGO",
+  "backgroundUrl": "http://localhost:8080/realms/test1/tide-idp-resources/images/BACKGROUND_IMAGE",
+  "logoUrl": "http://localhost:8080/realms/test1/tide-idp-resources/images/LOGO",
   "homeOrkUrl": "http://localhost:1001",
-  "client-origin-auth-http://localhost:3000": "YHYw3WB7acxSOC6bLL97Htt/uwBiN/3BVG43oA6jMtqG000TM4v/TrFVhKxPIRmd0B0XBv8O/30erby2V9uQDQ=="
+  "vendorId": "2001506526436444463038426501947606130251128580632273695511989417402424608167",
+  "client-origin-auth-http://localhost:8080": "5shihg2vsWvUnhj5MlPDjy1DmrcfhBC6/Hf50SP4mjg8uCbeYU/Y+apMcmrNAVJUFadASMbjdSXNGZQlO95YAw==",
+  "client-origin-auth-http://localhost:3000": "whTuPsRPip++sQUtyJEXk7/yspuitMfZGua8mwSlF2jj2bgyWM22NR2aCU2ZlgzNUOycgo4bW2qCD1rtORJjBA==",
+  "gVVK": "d1d9bce876014848791a34f0e48b50d58531a3f460d61b55bc9babe089d6f746",
+  "vvkId": "2001506526436444463038426501947606130251128580632273695511989417402424608167",
+  "orkUrl": "http://hostgateway:1001",
+  "payerPublic": "200000c06316b4e2218c10a8fcbbc9a8f7f80faa1190d1d0d21b8d753c7a041923182c",
+  "obfGVVK": "d1d9bce876014848791a34f0e48b50d58531a3f460d61b55bc9babe089d6f746",
+  "gVRKCertificate": "vq4CBvv170VH63gM8AGolPxR4RjH1+oXw75ZxCcBJ9C9upFrb0D2y9d+xeIK60H2ssXAOtqrWI/wMA4C4zOfBQ==",
+  "thresholdT": 3,
+  "thresholdN": 5
 }

@@ -30,40 +30,40 @@ public static class KeycloakWebApiAuthenticationBuilderExtensions
 	///     Thrown when <paramref name="builder" /> or
 	///     <paramref name="configureDPoPOptions" /> is null.
 	/// </exception>
-	//public static KeycloakWebApiAuthenticationBuilder WithDPoP(
-	//	this KeycloakWebApiAuthenticationBuilder builder,
-	//	Action<DPoPOptions> configureDPoPOptions)
-	//{
-	//	ArgumentNullException.ThrowIfNull(builder);
-	//	ArgumentNullException.ThrowIfNull(configureDPoPOptions);
+	public static KeycloakWebApiAuthenticationBuilder WithDPoP(
+		this KeycloakWebApiAuthenticationBuilder builder,
+		Action<DPoPOptions> configureDPoPOptions)
+	{
+		ArgumentNullException.ThrowIfNull(builder);
+		ArgumentNullException.ThrowIfNull(configureDPoPOptions);
 
-	//	var dPoPOptions = new DPoPOptions();
-	//	configureDPoPOptions(dPoPOptions);
+		var dPoPOptions = new DPoPOptions();
+		configureDPoPOptions(dPoPOptions);
 
-	//	builder.Services.TryAddEnumerable(
-	//		ServiceDescriptor.Singleton<IPostConfigureOptions<JwtBearerOptions>>(
-	//			new DPoPJwtBearerPostConfigureOptions(builder.JwtBearerAuthenticationScheme)));
+		builder.Services.TryAddEnumerable(
+			ServiceDescriptor.Singleton<IPostConfigureOptions<JwtBearerOptions>>(
+				new DPoPJwtBearerPostConfigureOptions(builder.JwtBearerAuthenticationScheme)));
 
-	//	builder.Services.TryAddSingleton(dPoPOptions);
-	//	builder.Services.TryAddScoped<IDPoPProofValidationService, DPoPProofValidationService>();
-	//	builder.Services.TryAddScoped<MessageReceivedHandler>();
-	//	builder.Services.TryAddScoped<TokenValidationHandler>();
-	//	builder.Services.TryAddScoped<ChallengeHandler>();
+		builder.Services.TryAddSingleton(dPoPOptions);
+		builder.Services.TryAddScoped<IDPoPProofValidationService, DPoPProofValidationService>();
+		builder.Services.TryAddScoped<MessageReceivedHandler>();
+		builder.Services.TryAddScoped<TokenValidationHandler>();
+		builder.Services.TryAddScoped<ChallengeHandler>();
 
-	//	return builder;
-	//}
-	/// <summary>
-	///     Enables DPoP (Demonstration of Proof-of-Possession) support for the Asgard API authentication builder.
-	/// </summary>
-	/// <param name="builder">
-	///     The <see cref="KeycloakWebApiAuthenticationBuilder" /> instance to configure.
-	/// </param>
-	/// <returns>
-	///     The configured <see cref="KeycloakWebApiAuthenticationBuilder" /> instance.
-	/// </returns>
-	//public static KeycloakWebApiAuthenticationBuilder WithDPoP(
-	//	this KeycloakWebApiAuthenticationBuilder builder)
-	//{
-	//	return builder.WithDPoP(_ => { });
-	//}
+		return builder;
+	}
+		/// <summary>
+		///     Enables DPoP (Demonstration of Proof-of-Possession) support for the Asgard API authentication builder.
+		/// </summary>
+		/// <param name="builder">
+		///     The <see cref="KeycloakWebApiAuthenticationBuilder" /> instance to configure.
+		/// </param>
+		/// <returns>
+		///     The configured <see cref="KeycloakWebApiAuthenticationBuilder" /> instance.
+		/// </returns>
+	public static KeycloakWebApiAuthenticationBuilder WithDPoP(
+		this KeycloakWebApiAuthenticationBuilder builder)
+	{
+		return builder.WithDPoP(_ => { });
+	}
 }

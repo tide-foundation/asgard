@@ -49,7 +49,7 @@ public class DPoPOptions
     ///         </item>
     ///     </list>
     /// </summary>
-    internal TokenValidationParameters TokenValidationParameters { get; } = new()
+    public TokenValidationParameters TokenValidationParameters { get; } = new()
     {
         ValidateActor = false,
         ValidateAudience = false,

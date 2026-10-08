@@ -1,0 +1,9 @@
+node_modules/
+test-results/
+playwright-report/
+playwright/.cache/
+.env
+
+# Adaptor configs downloaded from TideCloak per run. Realm-specific and they
+# carry a live enrollment_token — never commit them.
+.adaptors/
