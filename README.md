@@ -14,7 +14,7 @@ The fastest way to see it working end-to-end is the [Tide.Asgard.AspNetCore.Exam
 | MIGRATION | Replacing another ASP.NET Authentication Provider with Asgard
 | EXTENSION | Extending core Asgard functions such as the AsgardCache
 
-## Seeing it from above
+## How everything fits
 ### Asgard mTLS certificate auto-registration
 ```mermaid
 sequenceDiagram
@@ -53,6 +53,9 @@ sequenceDiagram
         participant Browser@{ "type": "boundary", "alias": "Browser Client<br/>(using tidecloak-js)" }
         participant Backend@{ "type": "control", "alias": "ASP.NET Backend<br/>(using Asgard)" }
     end
+    box rgba(246, 236, 92, 0.15)
+        participant OtherResource@{ "type": "entity", "alias": "Files Resource" }
+    end
     box rgba(139, 92, 246, 0.15)
         participant TideCloak@{ "type": "entity", "alias": "TideCloak IAM" }
     end
@@ -60,7 +63,7 @@ sequenceDiagram
         participant TideNetwork@{ "type": "collections", "alias": "Tide Network" }
     end
 
-    Browser->>Backend: Get Tidecloak user list
+    Browser->>Backend: Perform analysis on user files
     Note over Backend: Requires resource delegation<br/>approval from user
     Backend-->>Browser: Get delegation approval of my resource key
     Browser->>Browser: Sign approval with<br/>browser stored DPoP key
@@ -75,7 +78,7 @@ sequenceDiagram
     TideCloak->>TideNetwork: Sign exchanged token, verify approval
     TideNetwork-->>TideCloak: Signed token
     TideCloak-->>Backend: Exchanged token tied to resource mTLS<br/>+ doken for Tide Network requests (Tide-secured delegation only)
-    Backend->>TideCloak: Request user list, authorized with<br/>resource mTLS bound token
+    Backend->>OtherResource: Request user files, authorized with<br/>resource mTLS bound token
 ```
 ### Encryption
 ```mermaid
