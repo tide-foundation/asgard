@@ -1,15 +1,118 @@
 # Asgard
 
-Asgard is a .NET **Cyber Immunity SDK** — authentication, authorization and authority for ASP.NET Core apps — built for **TideCloak**, Tide's identity and access management platform. With Asgard, your API can verify TideCloak logins, perform **ineffable locking** (encryption) of data under programmable policies, and securely exchange tokens between services.
+Asgard is a .NET **Cyber Immunity SDK**; authentication, authorization and authority for ASP.NET Core apps - built for **TideCloak**. With Asgard, your ASP.NET application can verify TideCloak logins, perform **ineffable locking** (encryption) of data under programmable policies, and securely exchange tokens between services.
 
-The fastest way to see it working end-to-end is the [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) project — the snippets below mirror its setup.
+Asgard requires the client side library **tidecloak-js**, which handles the browser authentication and approval flows.
 
-## Concepts in 30 seconds
+The fastest way to see it working end-to-end is the [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) project - the snippets below mirror its setup.
 
-New to TideCloak? These are the only terms you need for this guide:
+## Guides to get into it
+| Guide | Used for
+| --- | --- |
+| [USAGE](USAGE.md) | Using Asgard for user authentication, decentralized locking operations and policy management.
+| GETTING STARTED | Integrating Asgard into a new ASP.NET project
+| MIGRATION | Replacing another ASP.NET Authentication Provider with Asgard
+| EXTENSION | Extending core Asgard functions such as the AsgardCache
+
+## Seeing it from above
+### Asgard mTLS certificate auto-registration
+```mermaid
+sequenceDiagram
+    box rgba(59, 130, 246, 0.15) Your application
+        participant Browser@{ "type": "boundary", "alias": "Browser Client<br/>(using tidecloak-js)" }
+        participant Backend@{ "type": "control", "alias": "ASP.NET Backend<br/>(using Asgard)" }
+    end
+    box rgba(139, 92, 246, 0.15)
+        participant TideCloak@{ "type": "entity", "alias": "TideCloak IAM" }
+    end
+    box rgba(16, 185, 129, 0.15)
+        participant TideNetwork@{ "type": "collections", "alias": "Tide Network" }
+    end
+    actor Admins
+
+    Note over Backend: Generate resource keys (identity + Tide)<br/>and certificate request
+    Backend->>TideCloak: Request resource identity certificate<br/>(using one-time enrollment token)
+
+    loop Until approved
+        Backend->>TideCloak: Has resource identity been approved?
+        TideCloak-->>Backend: Not yet
+    end
+
+    Admins->>TideCloak: Approve certificate request
+    TideCloak->>TideNetwork: Sign resource identity certificate
+    TideNetwork-->>TideCloak: Signed certificate
+
+    Backend->>TideCloak: Has resource identity been approved?
+    TideCloak-->>Backend: Yes - signed resource identity certificate<br/>+ tidecloak realm certificate
+    Backend->>Backend: Verify both certificates,<br/>trust tidecloak realm certificate,<br/>use resource identity certificate
+```
+### Asgard Resource Delegation
+```mermaid
+sequenceDiagram
+    box rgba(59, 130, 246, 0.15) Your application
+        participant Browser@{ "type": "boundary", "alias": "Browser Client<br/>(using tidecloak-js)" }
+        participant Backend@{ "type": "control", "alias": "ASP.NET Backend<br/>(using Asgard)" }
+    end
+    box rgba(139, 92, 246, 0.15)
+        participant TideCloak@{ "type": "entity", "alias": "TideCloak IAM" }
+    end
+    box rgba(16, 185, 129, 0.15)
+        participant TideNetwork@{ "type": "collections", "alias": "Tide Network" }
+    end
+
+    Browser->>Backend: Get Tidecloak user list
+    Note over Backend: Requires resource delegation<br/>approval from user
+    Backend-->>Browser: Get delegation approval of my resource key
+    Browser->>Browser: Sign approval with<br/>browser stored DPoP key
+
+    opt Tide-secured delegation
+        Browser->>Browser: Also sign approval with<br/>user's Tide session key
+    end
+
+    Browser->>Backend: Resource delegation approval
+    Backend->>Backend: Verify approval
+    Backend->>TideCloak: Exchange user token using delegation approval<br/>(over mTLS, using resource identity certificate)
+    TideCloak->>TideNetwork: Sign exchanged token, verify approval
+    TideNetwork-->>TideCloak: Signed token
+    TideCloak-->>Backend: Exchanged token tied to resource mTLS<br/>+ doken for Tide Network requests (Tide-secured delegation only)
+    Backend->>TideCloak: Request user list, authorized with<br/>resource mTLS bound token
+```
+### Encryption
+```mermaid
+sequenceDiagram
+    actor User
+    box rgba(59, 130, 246, 0.15) Your application
+        participant Browser@{ "type": "boundary", "alias": "Browser Client<br/>(using tidecloak-js)" }
+        participant Backend@{ "type": "control", "alias": "ASP.NET Backend<br/>(using Asgard)" }
+    end
+    box rgba(139, 92, 246, 0.15)
+        participant TideCloak@{ "type": "entity", "alias": "TideCloak IAM" }
+    end
+    box rgba(16, 185, 129, 0.15)
+        participant TideNetwork@{ "type": "collections", "alias": "Tide Network" }
+    end
+
+    User->>Browser: Login
+    Browser->>TideCloak: Redirect
+    TideCloak->>TideNetwork: Sign user token
+    TideNetwork-->>TideCloak: Signed token
+    TideCloak-->>Browser: User token tied to browser stored DPoP key
+
+    Browser->>Backend: Encrypt my details
+    Note over Browser,TideNetwork: Backend gets an mTLS bound token + doken through Tide-secured delegation<br/>(see Asgard Resource Delegation above)
+    Backend->>TideCloak: Get encryption policy,<br/>authorized with mTLS bound token
+    TideCloak-->>Backend: Policy
+    Backend->>TideNetwork: Encrypt user details under policy, authorized with doken
+    TideNetwork-->>Backend: Encrypted details
+```
+
+
+## 5 concepts to know
+
+New to TideCloak? These are the only terms you need for these guides:
 
 - **Realm** — your app's own space in TideCloak: its users, clients and policies.
-- **Client** — a registration in the realm for each app that talks to TideCloak. A **public** client (e.g. your login page) runs in the browser and can't keep a secret; a **confidential** client (your backend) authenticates with one.
+- **Client** — a registration in the realm for each app that talks to TideCloak. A **public** client (e.g. your login page) runs in the browser and can't keep a secret; a **confidential** client (your backend) can prove its own identity — with Asgard, using a certificate signed by the Tide network.
 - **Caller** — the logged-in user behind the current request. Their token arrives in the `Authorization` header of every call to your API.
 - **Programmable policy** — a rule stored in TideCloak and enforced by the Tide network that defines who may lock or unlock what.
 - **Ineffable locking** — encryption performed by the Tide network where the key never exists anywhere in full — no key material should be stored by your app.
@@ -22,7 +125,7 @@ For a deeper dive into policies and contracts, see the [Forseti engine docs](htt
 - A running TideCloak instance with a configured realm and licence
 - Two clients in that realm:
   - a **public client** for the browser-side login page (e.g. `browser-login-page`)
-  - a **confidential client** for your .NET backend (e.g. `backend`)
+  - a **confidential client** for your .NET backend (e.g. `backend`), with its client authenticator set to `tide-mtls` and standard token exchange enabled
 
 Give the public client an **audience mapper** targeting the backend client — it stamps the backend's name into every login token, which is what makes your backend accept tokens from your login page.
 
@@ -41,9 +144,8 @@ Every TideCloak client exposes an **adapter config** — a small JSON blob that 
     "auth-server-url": "http://localhost:8080",
     "ssl-required": "external",
     "resource": "backend",
-    "credentials": {
-      "secret": "<client secret>"
-    },
+    "vendorId": "...",
+    "enrollment_token": "<one-time enrollment token>",
     "jwk": {
       "keys": [
         {
@@ -60,6 +162,8 @@ Every TideCloak client exposes an **adapter config** — a small JSON blob that 
 }
 ```
 
+The downloaded file carries more Tide fields than shown here — paste it whole. There is no client secret: the `enrollment_token` lets your backend request its own certificate the first time it starts (step 2).
+
 > **Why "Keycloak"?** TideCloak is built on Keycloak, and Asgard builds on the `Keycloak.AuthServices` library — which reads its configuration from this section. That's the only reason the name appears here and in a few APIs below.
 
 > If you're also using `@tidecloak/js` on the browser side, download its adapter config separately and follow its instructions for installing it.
@@ -73,6 +177,7 @@ TideCloak signs tokens with EdDSA (Ed25519), a modern signature scheme .NET can'
 ```csharp
 using Keycloak.AuthServices.Authentication;
 using Tide.Asgard.AspNetCore.Authentication;
+using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -87,7 +192,8 @@ builder.Services
     });
 
 // Ineffable locking, policies and token exchange
-builder.Services.AddAsgard(builder.Configuration);
+builder.Services.AddAsgard(builder.Configuration, ResourceAuthenticationMode.AutoMTLSEnrollment);
+builder.Services.AddProblemDetails(); // required by app.UseExceptionHandler()
 
 var app = builder.Build();
 
@@ -101,15 +207,21 @@ app.MapControllers();
 app.Run();
 ```
 
-`AddAsgard` registers everything the rest of this guide uses: `IAspAsgardService` for locking, a policy provider backed by TideCloak, the token exchange service, and an exception handler that translates Asgard errors into `Asgard-*` response headers (which is why `app.UseExceptionHandler()` is required).
+`AddAsgard` registers everything the [usage guide](USAGE.md) builds on: `IAspAsgardService` for locking, a policy provider backed by TideCloak, the token exchange service, and an exception handler that translates Asgard errors into `Asgard-*` response headers (which is why `app.UseExceptionHandler()` is required).
 
-## 3. (Optional) Require DPoP
+`ResourceAuthenticationMode.AutoMTLSEnrollment` tells Asgard to request its own certificate from TideCloak on first start, using the enrollment token from step 1. An admin has to approve that request in TideCloak; Asgard keeps checking (every minute by default) and picks the certificate up without a restart — the flow is drawn in [Asgard mTLS certificate auto-registration](#asgard-mtls-certificate-auto-registration). Use `ResourceAuthenticationMode.MTLS` instead when the certificate is already in place and no enrollment should happen.
+
+## 3. Enable DPoP
 
 DPoP is an additional layer of security that ensures access tokens can't be stolen: it cryptographically ties the caller's token to their browser, rendering a stolen token useless anywhere else.
+
+It is optional if you only verify logins, but locking, policy management and token exchange all require it.
 
 To enable it, add `.WithDPoP` to the authentication registration from step 2:
 
 ```csharp
+using Tide.Asgard.AspNetCore.DPoP;
+
 builder.Services
     .AddKeycloakWebApiAuthentication(builder.Configuration, options =>
     {
@@ -124,168 +236,15 @@ builder.Services
 
 Every API protected by this authentication scheme will now require a valid DPoP proof.
 
-## 4. Lock data with a policy
-
-A **lock context** represents one atomic lock operation. It tells the Tide network: *"lock all of these items using this specific policy."* You can lock many items in one context, but each context uses exactly one policy.
-
-**Why does locking need a policy — shouldn't anyone be able to lock?** No. Imagine the database holding the Coca-Cola recipe: it would be a disaster if *any* employee could lock it. A policy states the logic that allows a caller to lock something — and because that logic is enforced during locking, the locked data is also **attested**: you know the locked recipe is legit, because only the CEO could have locked it.
-
-Each item is described by an `ItemToLock`:
-
-- `ItemId` — your identifier for the item
-- `Data` — the bytes to lock
-- `Tags` — labels **cryptographically tied to the resulting cipher**. The policy's contract uses them to decide whether this caller may lock data with these tags — e.g. data tagged `"secret recipe"` may only be locked by a caller who also holds the CEO role.
-
-Inject `IAspAsgardService` into your controller, build the context, pick a policy, and lock. Here an HR API locks an employee's sensitive fields before saving the record — the ciphers go in the database, the plain data never does:
+Then serve Tide's DPoP confirmation page, which the Tide login uses to check that the browser really holds its DPoP key. Pass the id of your **public** client, and place the call before `app.UseAuthentication()`:
 
 ```csharp
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using Ork.Models;
-using System.Text;
-using Tide.Asgard.AspNetCore.Authentication;
-
-public record CreateEmployeeRequest(string Name, string DateOfBirth, string MedicalNotes);
-
-[Authorize]
-[ApiController]
-[Route("api/employees")]
-public class EmployeesController(IAspAsgardService asgardService, AppDbContext db) : ControllerBase
-{
-    [HttpPost]
-    public async Task<IActionResult> Create(CreateEmployeeRequest request)
-    {
-        // lock the sensitive fields — the name stays in plain text
-        var lockOptions = new LockOptions()
-            .AddItemToLock(new ItemToLock
-            {
-                ItemId = "date-of-birth",
-                Tags = ["staff data", "date of birth"],
-                Data = Encoding.UTF8.GetBytes(request.DateOfBirth),
-            })
-            .AddItemToLock(new ItemToLock
-            {
-                ItemId = "medical-notes",
-                Tags = ["staff data", "medical"],
-                Data = Encoding.UTF8.GetBytes(request.MedicalNotes),
-            });
-
-        LockResponse response = await asgardService.CreateLockContext(lockOptions)
-            .UsePolicy("hr-staff-data-policy")
-            .Lock();
-
-        db.Employees.Add(new Employee
-        {
-            Name = request.Name,
-            DateOfBirthCipher = response.GetLockedItemById("date-of-birth").Cipher.ToArray(),
-            MedicalNotesCipher = response.GetLockedItemById("medical-notes").Cipher.ToArray(),
-        });
-        await db.SaveChangesAsync();
-
-        return Created();
-    }
-}
+app.UseTideSecuredDPoP(builder.Configuration, "browser-login-page");
 ```
 
-- `UsePolicy(policyId)` selects the policy for this context — here the `hr-staff-data-policy` created in [Manage policies](#5-manage-policies) below. Your application decides which policy fits which flow — basic users lock with the basic-user policy, admins with their own.
-- `Lock()` performs the operation and returns a `LockResponse`. Ciphers come back in the same order the items were added (`response.LockedItems`), or look one up with `GetLockedItemById`. Each `Cipher` is raw bytes (`ReadOnlyMemory<byte>`), ready to store wherever you keep your data.
+## Next: use it
 
-Under the hood, `Lock()` fetches the policy from TideCloak (authenticated as the caller, then cached), exchanges the caller's token for an application token, and asks the Tide network to lock the data under that policy.
-
-### Calling other Asgard-enabled services
-
-When your API calls another Asgard-enabled service, use the HTTP client from `asgardService.GetHttpClient()`. It forwards `Asgard-*` headers on requests and surfaces Asgard errors from downstream responses as `AsgardException`s, so error flows work across service boundaries.
-
-```csharp
-var client = asgardService.GetHttpClient();
-var response = await client.GetAsync("https://inventory.internal.example/api/items");
-```
-
-## 5. Manage policies
-
-A **policy provider** is the single source of policies for your application. `TidecloakPolicyProvider` stores them in TideCloak — inject it into the controller that manages your policies.
-
-Build a policy with `PolicyBuilder`, passing your vendor id and contract id. Here we create the `hr-staff-data-policy` used by the lock example above:
-
-```csharp
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using Tide.Asgard.Core.PolicyHelpers;
-
-[Authorize] // lock this endpoint down to your policy admins
-[ApiController]
-[Route("api/policies")]
-public class PoliciesController(IConfiguration config, TidecloakPolicyProvider policyProvider) : ControllerBase
-{
-    [HttpPost("staff-data")]
-    public async Task<IActionResult> CreateStaffDataPolicy()
-    {
-        var policyBuilder = new PolicyBuilder(config["vendorId"]!, contractId: "staff-data-contract");
-
-        policyBuilder.AllowPublicUse();
-        policyBuilder.BypassExplicitUserConsent();
-        policyBuilder.UseForEncyption();
-
-        var changeRequestId = await policyProvider.AddPolicyWithChangeRequest(
-            "hr-staff-data-policy", policyBuilder.BuildPolicy());
-
-        return changeRequestId is null
-            ? Ok("Policy is live.") // QEA disabled — applied immediately
-            : Accepted(value: $"Awaiting quorum approval. Change request: {changeRequestId}");
-    }
-}
-```
-
-- `AllowPublicUse()` — **anyone** can execute this policy; its contract will not check who initiated the request.
-- `BypassExplicitUserConsent()` — executing the policy does not require explicit approval from other Tide users.
-- `UseForEncyption()` — allow this policy to serve encryption (locking) requests.
-
-`AddPolicyWithChangeRequest` uploads the new policy to TideCloak. If **QEA** (Quorum-Enforced Authorization) is enabled, it returns a change request id — the policy takes effect once the quorum approves it. If QEA is disabled, it returns `null` and the policy is live immediately.
-
-## 6. (Optional) Token exchange
-
-Sometimes your API needs to call another protected service on the caller's behalf. You *could* widen the caller's token so its audience covers every service — but then one stolen token opens all of them. **Token exchange** keeps tokens narrow: your backend swaps the incoming token for a new one targeting only the service it's about to call.
-
-Register the service:
-
-```csharp
-builder.Services.AddTokenExchange(builder.Configuration);
-```
-
-`AddTokenExchange` reads the `Keycloak` section. To register token exchange for multiple clients in the same app, call `AddTokenExchangeForClient(IConfigurationSection)` with a different section per client.
-
-Inject `ITokenExchangeService` and call `ExchangeToken` — it picks up the caller's token from the current HTTP context. Here the API fetches the caller's payslips from a separate payroll service:
-
-```csharp
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using System.Net.Http.Headers;
-using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
-
-[Authorize]
-[ApiController]
-[Route("api/payslips")]
-public class PayslipsController(
-    ITokenExchangeService exchangeService,
-    IHttpClientFactory httpClientFactory) : ControllerBase
-{
-    [HttpGet]
-    public async Task<IActionResult> Get()
-    {
-        // swap the caller's token for one that only the payroll service accepts
-        var token = await exchangeService.ExchangeToken(
-            requestingClientId: "backend",
-            requestedAudience: "payroll-service");
-
-        var client = httpClientFactory.CreateClient();
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var payslips = await client.GetStringAsync("https://payroll.internal.example/api/payslips/me");
-
-        return Content(payslips, "application/json");
-    }
-}
-```
+Setup is done. The [usage guide](USAGE.md) covers what comes next: protecting endpoints, locking data with a policy, managing policies and exchanging tokens.
 
 ## Repository layout
 
