@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- wwwroot is the client project's build output: it is rebuilt, and published, through that project -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);wwwroot\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- brings in Tide.Asgard.AspNetCore.DPoP and Tide.Asgard.Core with it -->
+    <ProjectReference Include="..\..\..\Tide.Asgard.AspNetCore\Tide.Asgard.AspNetCore.Authentication.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the frontend - building this project builds it too -->
+    <ProjectReference Include="..\standardresourcedelegation.client\standardresourcedelegation.client.esproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+  </ItemGroup>
+
+</Project>

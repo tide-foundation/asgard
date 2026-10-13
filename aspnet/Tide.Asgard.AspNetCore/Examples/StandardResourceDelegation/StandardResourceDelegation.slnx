@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="standardresourcedelegation.client/standardresourcedelegation.client.esproj" />
+  <Project Path="StandardResourceDelegation.Server/StandardResourceDelegation.Server.csproj" />
+</Solution>

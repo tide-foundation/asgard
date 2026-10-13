@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Standard resource delegation</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 15px/1.5 system-ui, sans-serif; max-width: 720px; margin: 48px auto; padding: 0 16px; }
+      h1 { font-size: 20px; margin: 0; }
+      #status { color: GrayText; margin: 4px 0 24px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 8px 16px 8px 0; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+      th { font-size: 13px; color: GrayText; }
+      td:not(:last-child) { white-space: nowrap; }
+      td:last-child { overflow-wrap: anywhere; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    </style>
+  </head>
+  <body>
+    <h1>TideCloak users</h1>
+    <p id="status">Logging in...</p>
+    <table hidden>
+      <thead><tr><th>Username</th><th>Name</th><th>Email</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <pre hidden></pre>
+    <script type="module">
+      import { IAMService } from "@tidecloak/js";
+      import config from "./tidecloak.json"; // the public client's adapter config
+
+      const status = document.querySelector("#status");
+
+      async function main() {
+        // log in with a DPoP-bound token
+        await IAMService.init(config, {
+          onLoad: "login-required",
+          checkLoginIframe: false,
+          setupRequestEnclave: false,
+          dpopConfig: { mode: "strict", alg: "EdDSA" },
+        });
+
+        // IAMService.fetch sends the token with a DPoP proof. The backend first answers 401, asking for a
+        // resource delegation - tidecloak-js signs one with the DPoP key and retries, all inside this call.
+        status.textContent = "Asking the backend for the user list...";
+        const response = await IAMService.fetch("/users", {
+          headers: { Authorization: `Bearer ${IAMService.getToken()}` },
+        });
+
+        // a refusal is shown as it came back, with Asgard's error code when there is one
+        if (!response.ok) {
+          const code = response.headers.get("Asgard-Exception");
+          status.textContent = `${response.status} ${response.statusText}${code ? ` - ${code}` : ""}`;
+          const body = document.querySelector("pre");
+          body.textContent = await response.text();
+          body.hidden = false;
+          return;
+        }
+
+        const users = await response.json();
+        const rows = document.querySelector("tbody");
+        for (const user of users) {
+          const row = rows.insertRow();
+          const name = [user.firstName, user.lastName].filter(Boolean).join(" ");
+          for (const value of [user.username, name, user.email]) row.insertCell().textContent = value ?? "";
+        }
+        document.querySelector("table").hidden = false;
+        status.textContent = `${users.length} users, fetched by the backend on behalf of ${IAMService.getName()}`;
+      }
+
+      main().catch((error) => (status.textContent = error.message));
+    </script>
+  </body>
+</html>
