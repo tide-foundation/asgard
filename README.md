@@ -1,18 +1,84 @@
-# Asgard
+<h1 align="center">Asgard</h1>
 
-Asgard is a .NET **Cyber Immunity SDK**; authentication, authorization and authority for ASP.NET Core apps - built for **TideCloak**. With Asgard, your ASP.NET application can verify TideCloak logins, perform **ineffable locking** (encryption) of data under programmable policies, and securely exchange tokens between services.
+<p align="center">
+  <b>Tide's Cyber Immunity SDK</b><br/>
+  Authentication, authorization and authority for server apps - completely removing trust from your application.
+</p>
 
-Asgard requires the client side library **tidecloak-js**, which handles the browser authentication and approval flows.
+<p align="center">
+  <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4"/>
+  <img alt="Built for TideCloak" src="https://img.shields.io/badge/built%20for-TideCloak-0ea5e9"/>
+</p>
+
+<p align="center">
+  <a href="GETTING_STARTED.md">Getting started</a> ·
+  <a href="USAGE.md">Usage</a> ·
+  <a href="aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/">Example app</a>
+</p>
+
+With Asgard, your application can verify TideCloak logins, encrypt and decrypt data without ever holding the key (**ineffable locking**), and securely exchange tokens between services.
+
+> [!IMPORTANT]
+> Asgard requires the client side library **tidecloak-js**, which handles the browser authentication and approval flows.
 
 The fastest way to see it working end-to-end is the [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) project - the guides below mirror its setup.
 
-## Guides to get into it
-| Guide | Used for
-| --- | --- |
-| [USAGE](USAGE.md) | Using Asgard for user authentication, decentralized locking operations and policy management.
-| [GETTING STARTED](GETTING_STARTED.md) | Integrating Asgard into a new ASP.NET project
-| MIGRATION | Replacing another ASP.NET Authentication Provider with Asgard
-| [EXTENSION](EXTENSION.md) | Extending core Asgard functions such as the AsgardCache
+## What Asgard adds
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+**🌐 Tide Network connectivity**
+
+Interact with the Tide Network directly from your ASP.NET application.
+
+</td>
+<td width="33%" valign="top">
+
+**🔒 Locking data**
+
+Lock down sensitive application data with a key you don't hold, only accessible through your application policies.
+
+</td>
+<td width="33%" valign="top">
+
+**🔓 Unlocking data**
+
+Like locking the data, except your policies determine who or what has the authority to do so.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**📜 Policy creation**
+
+Create programmable policies to protect your users and data with a smart-contract-like interface.
+
+</td>
+<td valign="top">
+
+**🔁 Browser-delegated token exchange**
+
+A user's DPoP-bound token delegates to your service, so it can act on their behalf. Only available with TideCloak.
+
+</td>
+<td valign="top">
+
+**🔗 Service-delegated token exchange**
+
+A service's mTLS-bound token delegates to services downstream, so they can act on its behalf. Only available with TideCloak.
+
+</td>
+</tr>
+</table>
+
+## Supported Frameworks
+| Package | Framework | Language
+| --- | --- | --- |
+| Here | ASP.NET | C#
+| Here (coming soon) | NextJS | Typescript
 
 ## How everything fits
 ### Asgard mTLS certificate auto-registration
@@ -31,7 +97,7 @@ sequenceDiagram
     actor Admins
 
     Admins->>TideCloak: Download backend adapter config<br/>(includes one-time enrollment token)
-    Admins->>Backend: Install adapter config in appsettings.json
+    Admins->>Backend: Install adapter config in ASP.NET configuration
 
     Note over Backend: Generate resource keys (identity + Tide)<br/>and certificate request
     Backend->>TideCloak: Request resource identity certificate<br/>(using one-time enrollment token)
