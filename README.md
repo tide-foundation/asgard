@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="GETTING_STARTED.md">Getting started</a> ·
-  <a href="aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/">Secured Agent Example</a>
+  <a href="aspnet/Tide.Asgard.AspNetCore/Examples/Secured%20Agent/">Secured Agent Example</a>
 </p>
 
 With Asgard, your application can verify TideCloak logins, encrypt and decrypt data without ever holding the key (**ineffable locking**), and securely exchange tokens between services.
