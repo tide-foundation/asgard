@@ -1,7 +1,7 @@
 <h1 align="center">Asgard</h1>
 
 <p align="center">
-  <b>Tide's Cyber Immunity SDK</b><br/>
+  <b>Tide's Cyber-Herd Immunity SDK</b><br/>
   Authentication, authorization and authority for server apps - completely removing trust from your application.
 </p>
 
