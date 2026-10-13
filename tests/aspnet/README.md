@@ -5,15 +5,15 @@
 ```bash
 cd tests/aspnet
 npm install
-npx playwright install chromium    # only needed for the `app` project
+npx playwright install chromium    # only needed for the mTLS exchange test
 ```
 
-Two projects, split by what each needs running:
+Two projects, both needing the local Tide stack:
 
 | Command | Runs | Needs |
 |---|---|---|
 | `npm run test:harness` | the iga-engine-tests harness | the local Tide stack |
-| `npm run test:app` | tests against the example app | the example app on :3000 |
+| `npm run test:mtls-exchange` | login, DPoP and token exchange over mTLS, against the test server | the local Tide stack, and port 3000 free |
 | `npm test` | both | both |
 | `npm run report` | open the last HTML report | — |
 
@@ -105,22 +105,22 @@ Two things that are easy to miss, both handled:
   framework's ORK-sign precondition gate bootstraps, since the gate honours `KEEP_REALM` too.
 - Surviving is asserted as surviving *intact*: IGA still enabled, EdDSA, and on the ORK signing path.
 
-## Running the app tests
+## Running the mTLS exchange test
 
-[Tide.Asgard.AspNetCore.Example](../../aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/)
-must be running (default `http://localhost:3000`, override with `ASGARD_EXAMPLE_URL`).
+```bash
+npm run test:mtls-exchange
+```
 
-`mtls-token-exchange.spec.ts` exercises token exchange over mTLS and skips itself unless configured:
+[tests/mtls-exchange.spec.ts](tests/mtls-exchange.spec.ts) needs the same stack and framework as the
+harness, and nothing else listening on `http://localhost:3000`. It does the rest itself: provisions a
+realm from [recipes/mtls-exchange.recipe.json](recipes/mtls-exchange.recipe.json), downloads the two
+adaptor configs, builds and starts the [test server](testserver/), logs in, approves the certificate
+change requests, and exchanges a token over mTLS.
 
 | Env var | Purpose | Default |
 |---|---|---|
-| `TIDECLOAK_URL` | HTTPS base URL of TideCloak (required to run the suite) | — |
-| `TIDECLOAK_REALM` | Realm name | `test` |
-| `TIDECLOAK_CLIENT_ID` | Requesting client id (`client_id` in the exchange) | `backend` |
-| `TIDECLOAK_REQUESTED_AUDIENCE` | Target audience for the exchanged token | unset |
-| `TIDECLOAK_SUBJECT_TOKEN` | Caller access token to exchange (required for the success-path test) | — |
-| `MTLS_CLIENT_CERT_PATH` | Path to the client `.pfx` presented for mTLS | the example app's `client.pfx` |
-| `MTLS_CLIENT_CERT_PASSPHRASE` | Passphrase for the `.pfx`, if any | unset |
+| `ASGARD_EXAMPLE_URL` | URL the test server listens on — must match the frontend client's origin | `http://localhost:3000` |
+| `KEEP_REALM` | Set to leave the realm up after the run | unset |
 
 ## Known blocker
 

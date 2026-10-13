@@ -40,14 +40,14 @@ function show(authenticated, kc) {
  * @param path  endpoint to hit
  * @param label prefix for the log line, so the test can match on it
  *
- * secureFetch attaches the DPoP proof; a bare Authorization header would be
+ * fetch attaches the DPoP proof; a bare Authorization header would be
  * rejected, since the server runs DPoPModes.Required. For /Hello/exchange it
- * ALSO answers the server's delegation_required challenge and retries with a
+ * ALSO answers the server's resource delegation challenge and retries with a
  * DPoP-Resource-Delegation header — all in-browser, no enclave popup.
  */
 async function call(kc, path, label) {
   try {
-    const res = await kc.secureFetch(`${window.location.origin}${path}`, {
+    const res = await kc.fetch(`${window.location.origin}${path}`, {
       headers: { Authorization: `Bearer ${kc.token}` },
     });
     log(`${label} ${res.status} ${await res.text()}`);
@@ -72,7 +72,7 @@ async function init() {
       onLoad: "check-sso",
       silentCheckSsoRedirectUri: `${window.location.origin}/silent-check-sso.html`,
       checkLoginIframe: false,
-      useDPoP: { mode: "strict", alg: "EdDSA" },
+      dpopConfig: { mode: "strict", alg: "EdDSA" },
     });
     log(`init ok authenticated=${authenticated}`);
     show(authenticated, kc);

@@ -354,7 +354,7 @@ test.describe('mTLS token exchange', () => {
 
       await test.step('call /Hello with the DPoP-bound token', async () => {
         await page.click('#btn-call-api');
-        // secureFetch attaches the proof; without it the server answers
+        // fetch attaches the proof; without it the server answers
         // 400 DPoP error="invalid_request", so a 200 here IS the DPoP assertion.
         await expect(page.locator('#result')).toContainText('hello 200', { timeout: 30_000 });
         await expect(page.locator('#result')).toContainText('hi!');
@@ -444,8 +444,8 @@ test.describe('mTLS token exchange', () => {
         await page.click('#btn-exchange');
 
         // Three things have to hold for this 200:
-        //  - the DPoP delegation challenge was answered (secureFetch retries
-        //    with DPoP-Resource-Delegation), else 401 delegation_required;
+        //  - the DPoP delegation challenge was answered (fetch retries
+        //    with DPoP-Resource-Delegation), else 401 DPoPDelegationProofNotFound;
         //  - the app authenticated to TideCloak with its enrolled client
         //    certificate — this is the mTLS assertion;
         //  - exchange v2 accepted the subject token, which requires `backend`

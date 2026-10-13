@@ -2,14 +2,15 @@
 
 A deliberately minimal ASP.NET Core app that mimics
 `aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example` with the business
-logic removed. It exists to answer one question: **can a user authenticate, and
-is the resulting access token DPoP-bound?**
+logic removed. It exists to answer two questions: **can a user authenticate
+with a DPoP-bound access token, and can the app exchange that token over mTLS?**
 
-- one controller, one endpoint — `GET /Hello`, `[Authorize]`
+- one controller, two endpoints — `GET /Hello` (`[Authorize]`) and
+  `GET /Hello/exchange` (also `[RequireExchangeApproval]`, then a token exchange)
 - DPoP is `DPoPModes.Required` globally, so a 200 from `/Hello` is only
   reachable with a DPoP-bound token
-- no `AddAsgard`, no policy provider, no token exchange, no mTLS (see
-  [Not here yet](#not-here-yet))
+- `AddAsgard(..., AutoMTLSEnrollment)` for the mTLS identity and token exchange;
+  no policy provider and no locking
 
 ## Installing adaptors
 
@@ -100,10 +101,6 @@ throws at startup.
 
 ## Not here yet
 
-- **`AddAsgard(..., AutoMTLSEnrollment)`** is intentionally omitted. It enrols
-  the app's client certificate at startup, which depends on the realm CA and
-  certificate change request being authorized first. Adding it is a one-line
-  change once that ceremony is done.
 - **The `:3000` origin must be signed.** A freshly bootstrapped realm only has
   `client-origin-auth-http://localhost:8080` in its adaptor. Without a signed
   `http://localhost:3000`, the Tide enclave refuses the login with *"Client

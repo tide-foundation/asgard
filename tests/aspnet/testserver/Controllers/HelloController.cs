@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
-using Tide.Asgard.AspNetCore.DPoP.Exchange;
 
 namespace Asgard.TestServer.Controllers;
 
@@ -40,18 +39,18 @@ public class HelloController(
 	/// here is therefore proof that mTLS authentication succeeded, and a failure
 	/// before the certificate is issued is expected rather than surprising.
 	///
-	/// [RequireDPoPExchangeApproval] is not optional: for a DPoP-authenticated
+	/// [RequireExchangeApproval] is not optional: for a DPoP-authenticated
 	/// request ExchangeToken reads the validated delegation proof this filter
 	/// puts in HttpContext.Items, and throws DPoPDelegationProofNotFound without
-	/// it. The filter challenges with DPoP-Delegation-Key / -Challenge, which the
+	/// it. The filter challenges with Resource-Delegation-Key / -Challenge, which the
 	/// client answers with a DPoP-Resource-Delegation header.
 	/// </summary>
 	[HttpGet("exchange")]
-	[RequireDPoPExchangeApproval]
+	[RequireExchangeApproval]
 	public async Task<IActionResult> Exchange()
 	{
 		var requestingClientId = config.GetSection("Keycloak")["resource"]!;
-		var exchanged = await tokenExchangeService.ExchangeToken(requestingClientId);
+		var exchanged = (await tokenExchangeService.ExchangeToken(requestingClientId)).ApplicationAccessToken;
 
 		var jwt = new JsonWebToken(exchanged);
 		jwt.TryGetPayloadValue<string>("azp", out var azp);

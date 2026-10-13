@@ -24,7 +24,7 @@ const ADAPTOR_FILES = ['frontend.keycloak.json', 'backend.keycloak.json'];
  * REUSES an existing key rather than enrolling again — so leaving it in place
  * would silently carry one run's identity into the next run's realm.
  */
-const ENROLLMENT_FILES = ['resource.key', 'resource.csr', 'resource.crt', 'root.crt'];
+const ENROLLMENT_FILES = ['resource.key', 'tide.key', 'resource.csr', 'resource.crt', 'root.crt'];
 
 /** Default listen URL — must match the frontend client's registered origin. */
 export const TESTSERVER_URL = process.env.ASGARD_EXAMPLE_URL ?? 'http://localhost:3000';
