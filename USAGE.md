@@ -2,13 +2,13 @@
 
 This guide covers what you do with Asgard once it is set up: authenticating users, locking data under a policy, managing policies and exchanging tokens.
 
-It assumes you have finished the setup steps in the [README](README.md#prerequisites). The snippets follow the [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) project.
+It assumes you have finished the setup steps in the [getting started guide](GETTING_STARTED.md). The snippets follow the [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) project.
 
 ## Before you start
 
 Three things must be true before the examples below will work:
 
-- **DPoP is enabled** ([README step 3](README.md#3-enable-dpop)). Locking, policy management and token exchange only work for callers using DPoP.
+- **DPoP is enabled** ([getting started, step 3](GETTING_STARTED.md#3-enable-dpop)). Locking, policy management and token exchange only work for callers using DPoP.
 - **Your backend's certificate has been approved in TideCloak.** Asgard requests it on first start and collects it by itself once an admin approves — see [how that works](README.md#asgard-mtls-certificate-auto-registration). Until then, anything that needs TideCloak answers `503` with the header `Asgard-Exception: ResourceIdentityNotRegistered`.
 - **Your browser app calls your API through tidecloak-js** (`IAMService.fetch`). It attaches the DPoP proof and answers Asgard's approval requests for you — see the example's [main.js](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/ClientApp/src/main.js).
 
