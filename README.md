@@ -1,8 +1,8 @@
 <h1 align="center">Asgard</h1>
 
 <p align="center">
-  <b>Tide's Cyber-Herd Immunity SDK</b><br/>
-  Authentication, authorization and authority for server apps - completely removing trust from your application.
+  <b>TideCloak's Cyber-Herd Immunity Server SDK</b><br/>
+  Authentication, authorization and authority for server apps - completely removing the need for blind trust in your application.
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 With Asgard, your application can verify TideCloak logins, encrypt and decrypt data without ever holding the key (**ineffable locking**), and securely exchange tokens between services.
 
 > [!IMPORTANT]
-> Asgard requires the client side library [**tidecloak-js**](https://github.com/tide-foundation/tidecloak-js), which handles the browser authentication and approval flows.
+> For compatibility, Asgard requires the web client side to use the [**tidecloak-js**](https://github.com/tide-foundation/tidecloak-js) library, which handles the browser authentication, delegation and approval flows.
 
 ## Features
 
@@ -51,7 +51,7 @@ Like locking the data, except your policies determine who or what has the author
 
 **📜 Policy creation**
 
-Create programmable policies to protect your users and data with a smart-contract-like interface.
+Create programmable policies to protect your users and data with a smart-contract-like logic.
 
 </td>
 <td valign="top">
@@ -75,6 +75,7 @@ A service's mTLS-bound token delegates to services downstream, so they can act o
 | Package | Framework | Language
 | --- | --- | --- |
 | [Link](aspnet/Tide.Asgard.AspNetCore/README.md) | ASP.NET | C#
+| Here (coming soon) | Python | Python
 | Here (coming soon) | NextJS | Typescript
 
 ## How does this all work?
