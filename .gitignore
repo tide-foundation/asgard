@@ -54,3 +54,6 @@ wwwroot/
 *.swp
 *.swo
 *~
+
+*.key
+*.crt
