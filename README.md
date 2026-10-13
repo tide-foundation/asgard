@@ -12,18 +12,15 @@
 
 <p align="center">
   <a href="GETTING_STARTED.md">Getting started</a> ·
-  <a href="USAGE.md">Usage</a> ·
-  <a href="aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/">Example app</a>
+  <a href="aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/">Secured Agent Example</a>
 </p>
 
 With Asgard, your application can verify TideCloak logins, encrypt and decrypt data without ever holding the key (**ineffable locking**), and securely exchange tokens between services.
 
 > [!IMPORTANT]
-> Asgard requires the client side library **tidecloak-js**, which handles the browser authentication and approval flows.
+> Asgard requires the client side library [**tidecloak-js**](https://github.com/tide-foundation/tidecloak-js), which handles the browser authentication and approval flows.
 
-The fastest way to see it working end-to-end is the [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) project - the guides below mirror its setup.
-
-## What Asgard adds
+## Features
 
 <table>
 <tr>
@@ -77,10 +74,10 @@ A service's mTLS-bound token delegates to services downstream, so they can act o
 ## Supported Frameworks
 | Package | Framework | Language
 | --- | --- | --- |
-| Here | ASP.NET | C#
+| [Here](aspnet/Tide.Asgard.AspNetCore/README.md) | ASP.NET | C#
 | Here (coming soon) | NextJS | Typescript
 
-## How everything fits
+## How does this all work?
 ### Asgard mTLS certificate auto-registration
 ```mermaid
 sequenceDiagram
