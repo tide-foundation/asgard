@@ -55,5 +55,13 @@ wwwroot/
 *.swo
 *~
 
+# The identity Asgard writes beside an app when it first starts: its keys, certificate request and certificates
 *.key
+*.csr
 *.crt
+
+# Example apps (aspnet/Tide.Asgard.AspNetCore/Examples)
+# On Linux the JavaScript project SDK writes to a folder literally named "obj\Debug", which obj/ does not match
+obj\\*/
+# Their lockfiles link to a local tidecloak-js checkout, so they differ from machine to machine
+aspnet/Tide.Asgard.AspNetCore/Examples/**/package-lock.json

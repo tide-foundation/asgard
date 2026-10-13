@@ -19,21 +19,23 @@ public class AspAsgardService(
 	AsgardSettings asgardSettings
 	) : IAspAsgardService
 {
-	public ILockContext CreateLockContext(LockOptions lockOptions)
+	public ILockContext CreateLockContext(LockOptions lockOptions) => CreateLockContext(lockOptions, null);
+	public ILockContext CreateLockContext(LockOptions lockOptions, string? clientIdForContext = null)
 	{
-		var context = new AspLockContext(asgardCache, tideClientManagerProvider, lockOptions, httpContextAccessor, tokenExchangeService);
+		var context = new AspLockContext(asgardCache, tideClientManagerProvider, lockOptions, httpContextAccessor, tokenExchangeService, asgardSettings);
+		if (clientIdForContext != null) context.ForClient(clientIdForContext);
 		return context;
 	}
 
 	public HttpClient GetHttpClient() => httpClientFactory.CreateClient("Asgard");
-	public async Task<string> GetApplicationAccessToken()
+	public async Task<string> GetApplicationAccessToken(string? exchangeTargetClient = null)
 	{
 		var context = httpContextAccessor.HttpContext ?? throw new InvalidOperationException($"HTTP context is not available. Ensure {nameof(AspAsgardService)} is only used in Controllers");
-		var tokenId = context.User.GetId();
+		var tokenId = context.User.GetTokenCacheId(exchangeTargetClient);
 		var token = await asgardCache.GetApplicationToken(tokenId);
 		if (token == null)
 		{
-			var resp = await tokenExchangeService.ExchangeToken();
+			var resp = await tokenExchangeService.ExchangeToken(asgardSettings.ClientName, exchangeTargetClient);
 			token = resp.ApplicationAccessToken;
 			await asgardCache.AddApplicationToken(tokenId, token, resp.ExpiresAt);
 		}

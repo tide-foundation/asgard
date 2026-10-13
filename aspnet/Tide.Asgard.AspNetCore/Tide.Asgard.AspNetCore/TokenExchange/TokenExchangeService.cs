@@ -141,7 +141,7 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 		var expiresAt = DateTime.UtcNow.AddSeconds(expiresIn.GetInt32());
 
 		// add tokens to cache
-		var tokenId = context.User.GetId();
+		var tokenId = context.User.GetTokenCacheId(requestedAudience);
 
 		await cache.AddApplicationToken(tokenId, accessToken, expiresAt);
 

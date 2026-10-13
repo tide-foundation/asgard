@@ -144,7 +144,7 @@ public class AspDefaultAsgardCache : BaseAsgardCache
 		if(PolicyProvider.isAuthenticated) return;
 		string authenticatedUserId;
 		if (_httpContextAccessor.HttpContext?.User?.Identity?.IsAuthenticated == false) return;
-		authenticatedUserId = _httpContextAccessor.HttpContext?.User?.GetId() ?? throw new InvalidOperationException("Could not find authenticated user id in http context");
+		authenticatedUserId = _httpContextAccessor.HttpContext?.User?.GetTokenCacheId() ?? throw new InvalidOperationException("Could not find authenticated user id in http context");
 		string applicationToken = await GetApplicationToken(authenticatedUserId) ?? throw new InvalidOperationException("Could not find application token in cache");
 		PolicyProvider.SetAuthentication(applicationToken);
 	}

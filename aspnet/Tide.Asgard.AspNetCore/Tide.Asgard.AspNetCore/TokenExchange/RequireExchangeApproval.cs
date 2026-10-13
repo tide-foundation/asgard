@@ -32,10 +32,12 @@ public class RequireExchangeApproval : Attribute, IFilterFactory
 {
 	private readonly int _proofValidityMinutes;
 	private readonly ApprovalRequirement _requirement;
+	private readonly string? _exchangeTargetResource;
 
-	public RequireExchangeApproval(ApprovalRequirement requirement = ApprovalRequirement.DPoP, int proofValidityMinutes = 10)
+	public RequireExchangeApproval(ApprovalRequirement requirement = ApprovalRequirement.DPoP, string? exchangeTargetResource = null, int proofValidityMinutes = 10)
 	{
 		_requirement = requirement;
+		_exchangeTargetResource = exchangeTargetResource;
 		_proofValidityMinutes = proofValidityMinutes;
 	}
 
@@ -50,8 +52,8 @@ public class RequireExchangeApproval : Attribute, IFilterFactory
 
         return _requirement switch
         {
-            ApprovalRequirement.DPoP => ActivatorUtilities.CreateInstance<DPoPExchangeApprovalFilter>(serviceProvider, window),
-            ApprovalRequirement.TideSecuredDPoP => ActivatorUtilities.CreateInstance<TideApprovalFilter>(serviceProvider, window),
+            ApprovalRequirement.DPoP => ActivatorUtilities.CreateInstance<DPoPExchangeApprovalFilter>(serviceProvider, _exchangeTargetResource ?? "", window),
+            ApprovalRequirement.TideSecuredDPoP => ActivatorUtilities.CreateInstance<TideApprovalFilter>(serviceProvider, _exchangeTargetResource ?? "", window),
             _ => throw new InvalidOperationException($"Unknown approval requirement: {_requirement}"),
         };
     }
@@ -90,12 +92,12 @@ internal static class Helpers
 	}
 }
 
-internal class TideApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgardCache asgardCache, ILogger<DPoPExchangeApprovalFilter> logger, TimeSpan proofValidityWindow) : DPoPExchangeApprovalFilter(deviceKeyProvider, asgardCache, logger, proofValidityWindow, true)
+internal class TideApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgardCache asgardCache, ILogger<DPoPExchangeApprovalFilter> logger, TimeSpan proofValidityWindow, string exchangeTargetResource) : DPoPExchangeApprovalFilter(deviceKeyProvider, asgardCache, logger, proofValidityWindow, exchangeTargetResource, true)
 {
     public override async Task OnAuthorizationAsync(AuthorizationFilterContext context)
 	{
 		// Check if we've already got an exchanged token in cache
-		var tokenId = context.HttpContext.User.GetId();
+		var tokenId = context.HttpContext.User.GetTokenCacheId(exchangeTargetResource);
 		var existingDoken = await _cache.GetApplicationTideDoken(tokenId);
 		if (existingDoken != null) return; // short circuit! if we already have an exchanged token in the cache we don't need to resource delegation stuff
 
@@ -113,7 +115,7 @@ internal class TideApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgar
 
 		if (!context.HttpContext.Request.Headers.TryGetValue("Enclave-Resource-Delegation-Signature", out var enclaveDelegationSignature))
 		{
-			Helpers.RequestResourceDelegation(context, tokenId, _deviceKeyProvider, AsgardErrorCode.TideEnclaveApprovalNotFound);
+			Helpers.RequestResourceDelegation(context, context.HttpContext.User.GetId(), _deviceKeyProvider, AsgardErrorCode.TideEnclaveApprovalNotFound);
 			context.HttpContext.Response.Headers["Require-Tide-Delegation"] = "true";
 			context.Result = new UnauthorizedResult();
 			return;
@@ -183,14 +185,16 @@ internal class DPoPExchangeApprovalFilter : IAsyncAuthorizationFilter
 	private readonly ILogger<DPoPExchangeApprovalFilter> _logger;
 	protected readonly IAsgardCache _cache;
 	private readonly bool _requireTideDelegation;
+	protected readonly string _exchangeTargetResource;
 
-	public DPoPExchangeApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgardCache asgardCache, ILogger<DPoPExchangeApprovalFilter> logger, TimeSpan proofValidityWindow, bool requireTideDelegation = false)
+	public DPoPExchangeApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgardCache asgardCache, ILogger<DPoPExchangeApprovalFilter> logger, TimeSpan proofValidityWindow, string exchangeTargetResource, bool requireTideDelegation = false)
 	{
 		_deviceKeyProvider = deviceKeyProvider;
 		_logger = logger;
 		_proofValidityWindow = proofValidityWindow;
 		_cache = asgardCache;
 		_requireTideDelegation = requireTideDelegation;
+		_exchangeTargetResource = exchangeTargetResource;
 	}
 	public virtual async Task OnAuthorizationAsync(AuthorizationFilterContext context)
 	{
@@ -204,7 +208,7 @@ internal class DPoPExchangeApprovalFilter : IAsyncAuthorizationFilter
 		}
 
 		// Check if we've already got an exchanged token in cache
-		var existingToken = await _cache.GetApplicationToken(context.HttpContext.User.GetId());
+		var existingToken = await _cache.GetApplicationToken(context.HttpContext.User.GetTokenCacheId(_exchangeTargetResource));
 		// short circuit! if we already have an exchanged token in the cache we don't need to resource delegation stuff
 		// don't short circuit if we need a tide delegation, because we need to ensure a new dpop delegation proof is present for the new request
 		if (existingToken != null && _requireTideDelegation == false) return; 
