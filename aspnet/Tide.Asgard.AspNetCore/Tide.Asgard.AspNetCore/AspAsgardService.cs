@@ -5,12 +5,13 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Tide.Asgard.AspNetCore.Authentication.Locking;
+using Tide.Asgard.AspNetCore.Authentication.mTLS;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 using Tide.Asgard.Core;
 
 namespace Tide.Asgard.AspNetCore.Authentication;
 
-public class AspAsgardService(
+internal class AspAsgardService(
 	TideClientManagerProvider tideClientManagerProvider,
 	IAsgardCache asgardCache,
 	IHttpContextAccessor httpContextAccessor,
@@ -27,8 +28,14 @@ public class AspAsgardService(
 		return context;
 	}
 
-	public HttpClient GetHttpClient() => httpClientFactory.CreateClient("Asgard");
-	public async Task<string> GetApplicationAccessToken(string? exchangeTargetClient = null)
+	public HttpClient GetHttpClient(string resourceClientId)
+	{
+		// checked here, so a bad id fails now rather than in the middle of a TLS handshake
+		if (!Utils.IsCertifiableClientId(resourceClientId))
+			throw new ArgumentException($"'{resourceClientId}' is not a client id the realm CA certifies", nameof(resourceClientId));
+		return httpClientFactory.CreateClient($"{MTLSAsgardClientOptions.NAME_PREFIX}:{resourceClientId}");
+	}
+	public async Task<string> ExchangeContextTokenForApplicationToken(string? exchangeTargetClient = null)
 	{
 		var context = httpContextAccessor.HttpContext ?? throw new InvalidOperationException($"HTTP context is not available. Ensure {nameof(AspAsgardService)} is only used in Controllers");
 		var tokenId = context.User.GetTokenCacheId(exchangeTargetClient);

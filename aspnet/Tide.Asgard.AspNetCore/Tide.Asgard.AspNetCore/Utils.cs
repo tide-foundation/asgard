@@ -10,7 +10,7 @@ using Tide.Asgard.Core.Crypto.Ed25519;
 
 namespace Tide.Asgard.AspNetCore.Authentication;
 
-public static class Utils
+internal static class Utils
 {
 	public const string RESOURCE_CERTIFICATE_DEFAULT_PATH = "./resource.crt";
 	public const string RESOURCE_KEY_DEFAULT_PATH = "./resource.key";
@@ -19,6 +19,13 @@ public static class Utils
 	public const string ROOT_CA_DEFAULT_PATH = "./root.crt";
 	public const int ENROLLMENT_POLL_INTERVAL_DEFAULT_SECONDS = 60;
 	public const string TIDECLOAK_JSON_ENVIRONMENT_VARIABLE = "TIDECLOAK_JSON";
+
+	/// <summary>
+	/// True when <paramref name="clientId"/> has the shape the realm CA certifies a client id in: 1 to 60 of
+	/// <c>A-Z a-z 0-9 _ -</c>. The CA builds a resource certificate's subject from it, so nothing else ever appears there.
+	/// </summary>
+	internal static bool IsCertifiableClientId(string clientId)
+		=> clientId.Length is >= 1 and <= 60 && clientId.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-');
 	/// <summary>
 	/// Finds the first jwk in the 'keys' section of the jwk set that has crv=Ed25519
 	/// </summary>

@@ -5,7 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace Tide.Asgard.Core.Crypto.Ed25519;
 
-public static class ExtendedJsonWebKeyConverter
+internal static class ExtendedJsonWebKeyConverter
 {
 	public static JsonWebKey ConvertFromEdDsaSecurityKey(EdDsaSecurityKey key)
 	{
@@ -29,6 +29,17 @@ public static class ExtendedJsonWebKeyConverter
 			return edDsaSecurityKey;
 		}
 		return webKey;
+	}
+	/// <summary>
+	/// True if the JWK carries any private or secret key member. <see cref="JsonWebKey.HasPrivateKey"/> only recognises
+	/// complete RSA and EC private keys, so it misses an OKP (Ed25519) key's private 'd'.
+	/// </summary>
+	public static bool ContainsPrivateKey(this JsonWebKey webKey)
+	{
+		ArgumentNullException.ThrowIfNull(webKey);
+		return webKey.D != null
+			|| webKey.P != null || webKey.Q != null || webKey.DP != null || webKey.DQ != null || webKey.QI != null
+			|| webKey.K != null;
 	}
 	public static byte[] ComputeJwkThumbprint(JsonWebKey webKey)
 	{

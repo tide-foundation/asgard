@@ -10,7 +10,7 @@ using Tide.Asgard.Core;
 
 namespace Tide.Asgard.AspNetCore.Authentication.Locking;
 
-public class AspLockContext(
+internal class AspLockContext(
 	IAsgardCache asgardCache,
 	TideClientManagerProvider tideClientManagerProvider,
 	LockOptions lockOptions,

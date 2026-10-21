@@ -1,0 +1,34 @@
+{
+  "realm": "a",
+  "auth-server-url": "http://localhost:8080/",
+  "ssl-required": "external",
+  "resource": "webapp_login",
+  "public-client": true,
+  "confidential-port": 0,
+  "jwk": {
+    "keys": [
+      {
+        "kid": "qGk7j1jpfZYoadeln65CcaC4ywQMl2HdeAFjKxaJKBk",
+        "kty": "OKP",
+        "alg": "EdDSA",
+        "use": "sig",
+        "crv": "Ed25519",
+        "x": "4XvMsZa6INp0VA-ZUwY7QYB8pc7KijsjctSbHvr7Cl4"
+      }
+    ]
+  },
+  "backgroundUrl": "http://localhost:8080/realms/a/tide-idp-resources/images/BACKGROUND_IMAGE",
+  "logoUrl": "http://localhost:8080/realms/a/tide-idp-resources/images/LOGO",
+  "homeOrkUrl": "http://localhost:1001",
+  "vendorId": "13a11997-0024-4dd8-a8d7-15aa9ea56844",
+  "client-origin-auth-http://localhost:3000": "/i7d/0bBTD0BCAtMUWxBseAysds25vN7QBO36ywumV7KYkM66mWAE9H/x3GsKJzdTkItYPoC5zg5pvgW2lJICw==",
+  "client-origin-auth-http://localhost:8080": "INUOU9mpTBm7eFuYRL8ZZ8XZ6h8tQbp7oRLtwojzyAcrbg2sbqI0gCkK6rvkGt+RwAQTEH1gu2T2XH7VIVUcBQ==",
+  "gVVK": "E17BCCB196BA20DA74540F9953063B41807CA5CECA8A3B2372D49B1EFAFB0A5E",
+  "vvkId": "13a11997-0024-4dd8-a8d7-15aa9ea56844",
+  "orkUrl": "http://hostgateway:1001",
+  "payerPublic": "200000ff2ea65bfc04ca1c8882f3be8efdbdaf7255e268a0190646536d670f7ef6ca6e",
+  "obfGVVK": "E17BCCB196BA20DA74540F9953063B41807CA5CECA8A3B2372D49B1EFAFB0A5E",
+  "gVRKCertificate": "05EhfD+oEjMWE1XlnPToUzpVeH2V40530muDi/TS6Nv2zHmea8HyuC7EVMUDEUGrGoMspRhjQNBL+0jn/OY8Ag==",
+  "thresholdT": 3,
+  "thresholdN": 5
+}

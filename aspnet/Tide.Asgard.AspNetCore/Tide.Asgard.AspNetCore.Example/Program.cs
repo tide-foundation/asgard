@@ -1,25 +1,32 @@
 using Keycloak.AuthServices.Authentication;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Tide.Asgard.AspNetCore.Authentication;
+using Tide.Asgard.AspNetCore.Authentication.mTLS;
+using Tide.Asgard.AspNetCore.Authentication.SetupHelpers;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 using Tide.Asgard.AspNetCore.DPoP;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
-
-builder.Services
-	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
+builder
+	.AddAsgard(opts =>
 	{
-		options.RequireHttpsMetadata = false;
-		options.TokenValidationParameters.IssuerSigningKey = Utils.GetEd25519IssuerKey(builder.Configuration);
+		opts.RequireHttpsMetadata = false; // for local testing
 	})
-	.WithDPoP(opts =>
+	.RequireTokenBinding(opts =>
 	{
-		opts.Mode = DPoPModes.Required;
+		opts.SupportBindings = Binding.DPoP | Binding.mTLS;
 	});
 
- 
-builder.Services.AddAsgard(builder.Configuration, ResourceAuthenticationMode.AutoMTLSEnrollment); // needed
+builder.Services.AddControllers();
+
+
+// we let the developer define the custom root ca path and all that like we did with dpop
+// var rootCa = AsgardCertificateLoader.LoadRootCertificate(builder.Configuration); // needed for mtls
+
+
 builder.Services.AddScoped<TidecloakPolicyProvider>(); // needed
 builder.Services.AddProblemDetails(); // needed
 
@@ -31,7 +38,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 
-app.UseTideSecuredDPoP(builder.Configuration, "frontend"); // needed
+app.UseTide_over_DPoP(builder.Configuration, "frontend"); // needed
 
 app.UseAuthentication();
 app.UseAuthorization();

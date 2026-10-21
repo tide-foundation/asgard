@@ -10,7 +10,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 {
 	[Authorize]
 	[ApiController]
-	[RequireExchangeApproval(ApprovalRequirement.DPoP)]
+	[RequireExchangeApproval(ApprovalRequirement.Basic)]
 	[Route("[controller]")]
 	public class PolicyController(IAspAsgardService asgardService, TidecloakPolicyProvider policyProvider) : Controller
 	{
@@ -19,7 +19,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 		[HttpGet("Create")]
 		public async Task<IActionResult> Create()
 		{
-			var token = await asgardService.GetApplicationAccessToken();
+			var token = await asgardService.ExchangeContextTokenForApplicationToken();
 
 			policyProvider.SetAuthentication(token);
 

@@ -9,8 +9,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tide.Asgard.AspNetCore.Exam
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tide.Asgard.Core", "Tide.Asgard.Core\Tide.Asgard.Core.csproj", "{5F7FBDFC-CD73-40EC-9DBE-AD0D90462F5D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tide.Asgard.AspNetCore.DPoP", "Tide.Asgard.AspNetCore.DPoP\Tide.Asgard.AspNetCore.DPoP.csproj", "{358316E8-6411-4737-9538-FAC7DE3B9383}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ork.Clients", "..\..\..\project\ork\Ork.Clients\Ork.Clients.csproj", "{0505D3C7-1184-DA3D-BDBE-616D1DE855B3}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ork.Models", "..\..\..\project\ork\Ork.Models\Ork.Models.csproj", "{4DB43B28-6C2B-DE17-DE50-0287CC5689DA}"
@@ -33,10 +31,6 @@ Global
 		{5F7FBDFC-CD73-40EC-9DBE-AD0D90462F5D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5F7FBDFC-CD73-40EC-9DBE-AD0D90462F5D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5F7FBDFC-CD73-40EC-9DBE-AD0D90462F5D}.Release|Any CPU.Build.0 = Release|Any CPU
-		{358316E8-6411-4737-9538-FAC7DE3B9383}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{358316E8-6411-4737-9538-FAC7DE3B9383}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{358316E8-6411-4737-9538-FAC7DE3B9383}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{358316E8-6411-4737-9538-FAC7DE3B9383}.Release|Any CPU.Build.0 = Release|Any CPU
 		{0505D3C7-1184-DA3D-BDBE-616D1DE855B3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{0505D3C7-1184-DA3D-BDBE-616D1DE855B3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0505D3C7-1184-DA3D-BDBE-616D1DE855B3}.Release|Any CPU.ActiveCfg = Release|Any CPU

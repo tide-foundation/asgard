@@ -30,8 +30,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\project\ork\Ork.Clients\Ork.Clients.csproj" />
-    <ProjectReference Include="..\Tide.Asgard.AspNetCore.DPoP\Tide.Asgard.AspNetCore.DPoP.csproj" />
     <ProjectReference Include="..\Tide.Asgard.Core\Tide.Asgard.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- UseTide_over_DPoP serves the page from the Tide.Asgard.AspNetCore.DPoP.Views namespace -->
+    <EmbeddedResource Include="DPoP\Views\tide_dpop_auth.html" LogicalName="Tide.Asgard.AspNetCore.DPoP.Views.tide_dpop_auth.html" />
   </ItemGroup>
 
   <ItemGroup>

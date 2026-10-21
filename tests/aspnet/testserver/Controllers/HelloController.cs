@@ -41,9 +41,9 @@ public class HelloController(
 	///
 	/// [RequireExchangeApproval] is not optional: for a DPoP-authenticated
 	/// request ExchangeToken reads the validated delegation proof this filter
-	/// puts in HttpContext.Items, and throws DPoPDelegationProofNotFound without
+	/// puts in HttpContext.Items, and throws DelegationProofNotFound without
 	/// it. The filter challenges with Resource-Delegation-Key / -Challenge, which the
-	/// client answers with a DPoP-Resource-Delegation header.
+	/// client answers with a Resource-Delegation header.
 	/// </summary>
 	[HttpGet("exchange")]
 	[RequireExchangeApproval]

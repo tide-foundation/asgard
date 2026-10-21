@@ -22,25 +22,15 @@ using Tide.Asgard.Core.PolicyHelpers;
 
 namespace Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 
-public enum ResourceAuthenticationMode
-{
-	/// <summary>
-	/// Asgard will look for a mTLS key if available. If none found, will attempt to enroll a mTLS resource certificate using enrollment token, resulting in a Tide Resource Identity.
-	/// </summary>
-	AutoMTLSEnrollment,
-	/// <summary>
-	/// Constant mTLS authentication to Tidecloak. Your resource will ONLY authenticate with the mTLS credentials.
-	/// </summary>
-	MTLS,
-
-}
+internal record TokenExchangeOptions(string subjectToken, string? scope = null, string? audience = null);
 public interface ITokenExchangeService
 {
 	Task<TokenExchangeResponse> ExchangeToken();
 	Task<TokenExchangeResponse> ExchangeToken(string requestingClientId, string? requestedAudience = null);
+	//Task<TokenExchangeResponse> ExchangeToken(TokenExchangeOptions options);
 }
 public record TokenExchangeResponse(string ApplicationAccessToken, string? ApplicationDoken, DateTime ExpiresAt);
-public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccessor httpContextAccessor, IConfiguration config, IAsgardCache cache) : ITokenExchangeService
+internal class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccessor httpContextAccessor, IConfiguration config, IAsgardCache cache) : ITokenExchangeService
 {
 	private HttpContext GetHttpContext() => httpContextAccessor.HttpContext ?? throw new InvalidOperationException($"HTTP context is not available. Ensure {nameof(TokenExchangeService)} is only used in Controllers");
 	public async Task<TokenExchangeResponse> ExchangeToken()
@@ -78,9 +68,9 @@ public class TokenExchangeService(IHttpClientFactory factory, IHttpContextAccess
 		var context = GetHttpContext();
 		if(!context.Items.TryGetValue("ValidatedDPoPResourceDelegationProof", out var dpopProofItem))
 		{
-			throw new AsgardException(AsgardErrorCode.DPoPDelegationProofNotFound);
+			throw new AsgardException(AsgardErrorCode.DelegationProofNotFound);
 		}
-		var dpopProof = dpopProofItem as string ?? throw new AsgardException(AsgardErrorCode.DPoPDelegationProofNotFound);
+		var dpopProof = dpopProofItem as string ?? throw new AsgardException(AsgardErrorCode.DelegationProofNotFound);
 
 		if (!context.Request.Headers.TryGetValue("Authorization", out var authHeader))
 			throw new UnauthorizedAccessException("Authorization header is missing.");

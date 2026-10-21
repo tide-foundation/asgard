@@ -7,10 +7,10 @@ with a DPoP-bound access token, and can the app exchange that token over mTLS?**
 
 - one controller, two endpoints — `GET /Hello` (`[Authorize]`) and
   `GET /Hello/exchange` (also `[RequireExchangeApproval]`, then a token exchange)
-- DPoP is `DPoPModes.Required` globally, so a 200 from `/Hello` is only
-  reachable with a DPoP-bound token
-- `AddAsgard(..., AutoMTLSEnrollment)` for the mTLS identity and token exchange;
-  no policy provider and no locking
+- `RequireTokenBinding` with `Binding.DPoP` only, so a 200 from `/Hello` is
+  only reachable with a DPoP-bound token
+- `AddAsgard()` for the mTLS identity and token exchange; no policy provider and
+  no locking
 
 ## Installing adaptors
 
@@ -52,7 +52,7 @@ ASGARD_ADAPTORS_DIR=../.adaptors/<realm> dotnet run
 ```
 
 `--ignore-scripts` is required, not cosmetic: `@tidecloak/js` is linked from
-source and its `prepare` script rebuilds the package, which currently fails on
+source and its `prepare` script rebuilds the package, which fails on
 this machine's TypeScript (`TS6046: Argument for '--moduleResolution' option`).
 The package ships a prebuilt `dist/`, so skipping the lifecycle scripts is
 enough — a plain `npm install` fails.
@@ -63,11 +63,11 @@ URIs and web origins are registered against.
 ### Realm vhosts and DNS
 
 The library's mTLS client talks to `https://<realm>.client.localhost:8443`, and
-the suite mints a new realm name every run — a name glibc will not resolve
+the suite mints a new realm name every run — a name glibc does not resolve
 (only bare `localhost` is special). `Program.cs` therefore adds a
 `ConnectCallback` to that client which dials the configured `auth-server-url`
 host for any `*.client.<host>` name, leaving the Host header and TLS SNI on the
-realm vhost so the proxy still picks the realm's certificate. No `/etc/hosts`
+realm vhost so the proxy picks the realm's certificate. No `/etc/hosts`
 or resolver changes are needed. This is a test-environment shim only; a real
 deployment has DNS for its realm vhosts.
 
@@ -86,7 +86,7 @@ valid DPoP-bound token it returns the username and the token's `cnf` claim.
 
 ## Enrollment poll interval
 
-`AddAsgard(..., AutoMTLSEnrollment)` files the certificate change requests at
+`AddAsgard()` files the certificate change requests at
 startup and then retries collection in the background until they are approved,
 so an approval landing *after* startup needs no restart. The default wait is 60
 seconds — far too slow for a test loop — so `appsettings.json` sets:
@@ -99,7 +99,7 @@ The adaptor config is layered on top of `appsettings.json`, but it carries no
 such key, so this override survives. It must be a positive number; anything else
 throws at startup.
 
-## Not here yet
+## Not covered
 
 - **The `:3000` origin must be signed.** A freshly bootstrapped realm only has
   `client-origin-auth-http://localhost:8080` in its adaptor. Without a signed

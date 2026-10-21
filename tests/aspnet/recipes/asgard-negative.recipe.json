@@ -1,0 +1,139 @@
+{
+  "name": "asgard-negative",
+  "hypothesis": "Realm for the Asgard negative suite, built in setup[] so the adopt-scan attests it in one pass. `asgard` is the resource under test (tide-mtls, so its adaptor carries an enrollment token). `caller` is a public direct-grant client whose tokens carry aud=asgard and aud=resource-a; `caller-short-lived` is the same with a 2 second access token lifespan; `caller-for-other-api` carries aud=other-api instead. `resource-a` is a tide-mtls client that exchanges caller tokens over mTLS for certificate-bound tokens with aud=asgard; `resource-b` is a tide-mtls client that only holds a certificate. bob is a plain password user. Predicted: bob's caller password-grant token ORK-signs (EdDSA).",
+  "tags": ["ork", "testbed", "pre-iga", "asgard", "dpop", "mtls", "token-exchange"],
+  "setup": [
+    {
+      "kind": "client.create",
+      "args": {
+        "clientId": "asgard",
+        "publicClient": false,
+        "clientAuthenticatorType": "tide-mtls",
+        "standardFlowEnabled": false,
+        "directAccessGrantsEnabled": false,
+        "serviceAccountsEnabled": false
+      }
+    },
+    {
+      "kind": "client.create",
+      "args": {
+        "clientId": "other-api",
+        "publicClient": false,
+        "standardFlowEnabled": false,
+        "directAccessGrantsEnabled": false,
+        "serviceAccountsEnabled": false
+      }
+    },
+    {
+      "kind": "client.create",
+      "args": { "clientId": "caller", "publicClient": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": true }
+    },
+    {
+      "kind": "client.create",
+      "args": {
+        "clientId": "caller-short-lived",
+        "publicClient": true,
+        "standardFlowEnabled": false,
+        "directAccessGrantsEnabled": true,
+        "attributes": { "access.token.lifespan": "2" }
+      }
+    },
+    {
+      "kind": "client.create",
+      "args": { "clientId": "caller-for-other-api", "publicClient": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": true }
+    },
+    {
+      "kind": "client.create",
+      "args": {
+        "clientId": "resource-a",
+        "publicClient": false,
+        "clientAuthenticatorType": "tide-mtls",
+        "standardFlowEnabled": false,
+        "directAccessGrantsEnabled": false,
+        "serviceAccountsEnabled": false,
+        "attributes": { "standard.token.exchange.enabled": "true" }
+      }
+    },
+    {
+      "kind": "client.create",
+      "args": {
+        "clientId": "resource-b",
+        "publicClient": false,
+        "clientAuthenticatorType": "tide-mtls",
+        "standardFlowEnabled": false,
+        "directAccessGrantsEnabled": false,
+        "serviceAccountsEnabled": false
+      }
+    },
+    {
+      "kind": "client.addProtocolMapper",
+      "args": {
+        "clientId": "caller",
+        "mapper": {
+          "name": "asgard-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.client.audience": "asgard", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      }
+    },
+    {
+      "kind": "client.addProtocolMapper",
+      "args": {
+        "clientId": "caller",
+        "mapper": {
+          "name": "resource-a-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.client.audience": "resource-a", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      }
+    },
+    {
+      "kind": "client.addProtocolMapper",
+      "args": {
+        "clientId": "caller-short-lived",
+        "mapper": {
+          "name": "asgard-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.client.audience": "asgard", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      }
+    },
+    {
+      "kind": "client.addProtocolMapper",
+      "args": {
+        "clientId": "caller-for-other-api",
+        "mapper": {
+          "name": "other-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.client.audience": "other-api", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      }
+    },
+    {
+      "kind": "client.addProtocolMapper",
+      "args": {
+        "clientId": "resource-a",
+        "mapper": {
+          "name": "asgard-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.client.audience": "asgard", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      }
+    },
+    {
+      "kind": "user.create",
+      "args": { "username": "bob", "password": "Passw0rd!", "email": "bob@example.com", "firstName": "Bob", "lastName": "Baker" },
+      "as": "bob"
+    }
+  ],
+  "probe": {
+    "kind": "token.request",
+    "args": { "grant": "password", "clientId": "caller", "user": "$bob", "password": "Passw0rd!" }
+  },
+  "expect": { "side": "ork", "outcome": "sign" }
+}

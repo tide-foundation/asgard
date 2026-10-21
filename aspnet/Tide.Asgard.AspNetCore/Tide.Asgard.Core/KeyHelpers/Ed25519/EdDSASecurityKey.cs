@@ -10,7 +10,7 @@ namespace Tide.Asgard.Core.Crypto.Ed25519;
 /// <summary>
 /// A Microsoft.IdentityModel security key for EdDSA.
 /// </summary>
-public class EdDsaSecurityKey : AsymmetricSecurityKey
+internal class EdDsaSecurityKey : AsymmetricSecurityKey
 {
 	public EdDsa EdDsa { get; }
 

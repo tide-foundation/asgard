@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace Tide.Asgard.Core.Crypto.Ed25519;
 
-public class EdDsaParameters
+internal class EdDsaParameters
 {
 	public EdDsaParameters(string curve)
 	{

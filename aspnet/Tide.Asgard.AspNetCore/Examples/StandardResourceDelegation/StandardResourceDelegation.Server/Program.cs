@@ -1,21 +1,14 @@
-using Keycloak.AuthServices.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Tide.Asgard.AspNetCore.Authentication;
+using Tide.Asgard.AspNetCore.Authentication.SetupHelpers;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
-using Tide.Asgard.AspNetCore.DPoP;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
-builder.Services
-	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
-	{
-		options.RequireHttpsMetadata = false; // local dev only
-		options.TokenValidationParameters.IssuerSigningKey = builder.Configuration.GetEd25519IssuerKey();
-	})
-	.WithDPoP(options => options.Mode = DPoPModes.Required);
-builder.Services.AddAsgard(builder.Configuration, ResourceAuthenticationMode.AutoMTLSEnrollment);
+builder.AddAsgard(options => options.RequireHttpsMetadata = false) // local dev only
+	.RequireTokenBinding(options => options.SupportBindings = Binding.DPoP); // only DPoP-bound tokens are accepted
 builder.Services.AddProblemDetails(); // required by UseExceptionHandler
 
 var app = builder.Build();
@@ -23,7 +16,7 @@ var app = builder.Build();
 app.UseExceptionHandler(); // required by Asgard, which reports its errors through it
 app.UseDefaultFiles(); // the frontend, which the client project builds into wwwroot/
 app.UseStaticFiles();
-app.UseTideSecuredDPoP(builder.Configuration, "browser-login-page"); // the id of the public client the frontend logs in with
+app.UseTide_over_DPoP(builder.Configuration, "browser-login-page"); // the id of the public client the frontend logs in with
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
@@ -43,7 +36,7 @@ public class UsersController(IAspAsgardService asgard, IHttpClientFactory httpCl
 		var tidecloak = httpClientFactory.CreateClient("Tidecloak");
 
 		// uses the caller's delegation to exchange their token for one this backend can act for them with
-		tidecloak.DefaultRequestHeaders.Authorization = new("Bearer", await asgard.GetApplicationAccessToken());
+		tidecloak.DefaultRequestHeaders.Authorization = new("Bearer", await asgard.ExchangeContextTokenForApplicationToken());
 
 		using var response = await tidecloak.GetAsync($"/admin/realms/{asgard.GetSettings().RealmName}/users");
 

@@ -18,6 +18,10 @@ const EXAMPLE_APP_URL = process.env.ASGARD_EXAMPLE_URL ?? 'http://localhost:3000
  *    provisions its own realm through the framework (slow, hence the long
  *    timeout) and then drives the example app in a browser.
  *  - `app` — tests against the running example app.
+ *  - `negative` — requests Asgard must turn away. Needs the local Tide stack:
+ *    `negative-setup` provisions its realms and starts its Asgard instance once
+ *    (a failed test restarts the worker, which would otherwise redo all of it),
+ *    and `negative-teardown` stops it and tears the realms down.
  *
  * Kept separate so `npm run test:app` stays fast and a missing Tide stack fails
  * in one obvious place instead of everywhere.
@@ -49,8 +53,24 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], baseURL: EXAMPLE_APP_URL, headless: true },
     },
     {
+      name: 'negative-setup',
+      testMatch: /negative\.setup\.ts$/,
+      teardown: 'negative-teardown',
+      timeout: 10 * 60_000,
+    },
+    {
+      name: 'negative-teardown',
+      testMatch: /negative\.teardown\.ts$/,
+      timeout: 5 * 60_000,
+    },
+    {
+      name: 'negative',
+      testMatch: /negative\.spec\.ts$/,
+      dependencies: ['negative-setup'],
+    },
+    {
       name: 'app',
-      testIgnore: [/iga-engine-harness\.spec\.ts$/, /mtls-exchange\.spec\.ts$/],
+      testIgnore: [/iga-engine-harness\.spec\.ts$/, /mtls-exchange\.spec\.ts$/, /negative\.spec\.ts$/],
       use: { ...devices['Desktop Chrome'], baseURL: EXAMPLE_APP_URL },
     },
   ],

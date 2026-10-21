@@ -11,7 +11,7 @@ namespace Tide.Asgard.AspNetCore.Authentication.Middleware;
 /// <summary>
 /// You must execute app.UseExceptionHandler() in the app pipleline
 /// </summary>
-public class AsgardExceptionHandler : IExceptionHandler
+internal class AsgardExceptionHandler : IExceptionHandler
 {
 	public ValueTask<bool> TryHandleAsync(
 			HttpContext httpContext,

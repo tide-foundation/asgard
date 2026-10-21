@@ -7,7 +7,7 @@ A static page ([index.html](standardresourcedelegation.client/index.html)) logs 
 Follow the [prerequisites](../../../../GETTING_STARTED.md#prerequisites) for the realm and its two clients, then:
 
 - name the public client `browser-login-page` (or change the name in `Program.cs`) and allow `http://localhost:3000` as its redirect URI and web origin
-- give the user you will log in as the `view-users` and `query-users` roles of the `realm-management` client - without them TideCloak refuses the user list with `403`
+- give the user you log in as the `view-users` and `query-users` roles of the `realm-management` client - without them TideCloak refuses the user list with `403`
 
 ## Add the two adapter configs
 

@@ -9,7 +9,7 @@ using Tide.Asgard.Core.PolicyHelpers;
 
 namespace Tide.Asgard.AspNetCore.Authentication;
 
-public class AspDefaultAsgardCache : BaseAsgardCache
+internal class AspDefaultAsgardCache : BaseAsgardCache
 {
 	private static readonly ConcurrentDictionary<string, (ReadOnlyMemory<byte> policy, DateTime ttl)> _policies = new();
 	private static readonly ConcurrentDictionary<string, (string token, DateTime ttl)> _applicationTokens = new();

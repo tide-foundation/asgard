@@ -1,0 +1,43 @@
+{
+  "name": "asgard-other-realm",
+  "hypothesis": "A second realm for the Asgard negative suite's wrong-issuer case: the same shape as the asgard-negative realm's `caller` path - a public direct-grant `caller` whose tokens carry aud=asgard, and a plain password user bob - so its tokens differ from the first realm's only in who issued and signed them. Predicted: bob's caller password-grant token ORK-signs (EdDSA).",
+  "tags": ["ork", "testbed", "pre-iga", "asgard"],
+  "setup": [
+    {
+      "kind": "client.create",
+      "args": {
+        "clientId": "asgard",
+        "publicClient": false,
+        "standardFlowEnabled": false,
+        "directAccessGrantsEnabled": false,
+        "serviceAccountsEnabled": false
+      }
+    },
+    {
+      "kind": "client.create",
+      "args": { "clientId": "caller", "publicClient": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": true }
+    },
+    {
+      "kind": "client.addProtocolMapper",
+      "args": {
+        "clientId": "caller",
+        "mapper": {
+          "name": "asgard-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.client.audience": "asgard", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      }
+    },
+    {
+      "kind": "user.create",
+      "args": { "username": "bob", "password": "Passw0rd!", "email": "bob@example.com", "firstName": "Bob", "lastName": "Baker" },
+      "as": "bob"
+    }
+  ],
+  "probe": {
+    "kind": "token.request",
+    "args": { "grant": "password", "clientId": "caller", "user": "$bob", "password": "Passw0rd!" }
+  },
+  "expect": { "side": "ork", "outcome": "sign" }
+}

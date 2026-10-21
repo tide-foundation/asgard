@@ -13,10 +13,11 @@ namespace Tide.Asgard.AspNetCore.Authentication.mTLS;
 /// that is the case - and this service keeps asking until the signed certificate is collectable, at which point it
 /// publishes the credentials to <see cref="CertificateRegisterSingleton"/> and stops.
 /// </summary>
-public sealed class ResourceIdentityEnrollmentService(
+internal sealed class ResourceIdentityEnrollmentService(
 	IConfigurationSection configurationSection,
 	IResourceKeyProvider resourceKeyProvider,
 	CertificateRegisterSingleton register,
+	ResourceIdentityPaths paths,
 	ILogger<ResourceIdentityEnrollmentService> logger) : BackgroundService
 {
 	/// <summary>
@@ -53,7 +54,7 @@ public sealed class ResourceIdentityEnrollmentService(
 			{
 				try
 				{
-					if (await ServiceCollectionExtensions.TryRegisterResourceIdentity(configurationSection, resourceKeyProvider, register))
+					if (await ResourceIdentityEnrollment.TryRegisterResourceIdentity(configurationSection, resourceKeyProvider, register, paths))
 					{
 						logger.LogInformation("Resource identity enrolled. The Tidecloak mTLS client is now usable.");
 						return;

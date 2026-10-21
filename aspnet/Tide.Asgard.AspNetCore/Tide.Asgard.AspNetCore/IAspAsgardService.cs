@@ -9,10 +9,13 @@ namespace Tide.Asgard.AspNetCore.Authentication;
 public interface IAspAsgardService : IAsgardService
 {
 	public ILockContext CreateLockContext(LockOptions lockOptions, string? clientIdForContext = null);
-	public HttpClient GetHttpClient();
 	/// <summary>
-	/// Returns the application access token for the current user. This token is used by the application to perform actions on behalf of the user.
+	/// An http client that calls another resource over mutual TLS and manages resource delegation flows for you.
+	/// <param name="resourceClientId">The client id of the resource to call.</param>
+	public HttpClient GetHttpClient(string resourceClientId);
+	/// <summary>
+	/// Returns the application access token for the current context. This token is used by the application to perform actions on behalf of the user/resource.
 	/// </summary>
 	/// <returns></returns>
-	public Task<string> GetApplicationAccessToken(string? requestedClient = null);
+	public Task<string> ExchangeContextTokenForApplicationToken(string? requestedClient = null);
 }

@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- brings in Tide.Asgard.AspNetCore.DPoP and Tide.Asgard.Core with it -->
+    <!-- brings in Tide.Asgard.Core with it -->
     <ProjectReference Include="..\..\..\Tide.Asgard.AspNetCore\Tide.Asgard.AspNetCore.Authentication.csproj" />
   </ItemGroup>
 

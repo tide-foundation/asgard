@@ -6,7 +6,7 @@ using Tide.Asgard.Core;
 
 namespace Tide.Asgard.AspNetCore.Authentication;
 
-public class AsgardMessageHandler(IHttpContextAccessor httpContextAccessor) : DelegatingHandler
+internal class AsgardMessageHandler(IHttpContextAccessor httpContextAccessor) : DelegatingHandler
 {
 	protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
 	{

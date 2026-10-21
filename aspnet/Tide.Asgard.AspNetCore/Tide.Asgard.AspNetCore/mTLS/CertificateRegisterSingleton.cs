@@ -2,7 +2,7 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace Tide.Asgard.AspNetCore.Authentication.mTLS;
 
-public sealed class CertificateRegisterSingleton
+internal sealed class CertificateRegisterSingleton
 {
 	private volatile ResourceCredentials? credentials;
 

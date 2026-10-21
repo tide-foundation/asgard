@@ -14,6 +14,7 @@ Two projects, both needing the local Tide stack:
 |---|---|---|
 | `npm run test:harness` | the iga-engine-tests harness | the local Tide stack |
 | `npm run test:mtls-exchange` | login, DPoP and token exchange over mTLS, against the test server | the local Tide stack, and port 3000 free |
+| `npm run test:negative` | requests Asgard must turn away: bad DPoP proofs, client certificates and delegations | the local Tide stack, and `openssl` |
 | `npm test` | both | both |
 | `npm run report` | open the last HTML report | — |
 
@@ -81,12 +82,12 @@ These are the framework's own variable names, so one set configures both suites.
 [tests/iga-engine-harness.spec.ts](tests/iga-engine-harness.spec.ts) is the **base test**. It proves:
 
 1. The framework is present and usable — pure filesystem, no stack needed.
-2. A recipe run with `KEEP_REALM=1` leaves its realm **alive**, which is how this suite will
+2. A recipe run with `KEEP_REALM=1` leaves its realm **alive**, so this suite can
    provision a realm for the example app.
 
 The realm recipe is [recipes/realm-keepalive.recipe.json](recipes/realm-keepalive.recipe.json) — a
-deliberately cheap placeholder that exercises the pipeline, not TideCloak. **The real Asgard realm
-recipe replaces it in place** once defined; nothing else needs to change.
+deliberately cheap placeholder that exercises the pipeline, not TideCloak. **An Asgard realm
+recipe can replace it in place**; nothing else needs to change.
 
 [lib/iga-engine.ts](lib/iga-engine.ts) is the **seam**. It shells out to the framework's documented
 CLI rather than importing its TypeScript: that repo is `private: true` with no entry point, and its
@@ -95,7 +96,7 @@ Playwright version differs from ours, so a cross-repo import would load two copi
 `REQUIRED_SCRIPTS`, so a rename fails loudly and specifically instead of as an opaque spawn error.
 
 [lib/tidecloak.ts](lib/tidecloak.ts) is read-only by design. Realm *writes* on an IGA realm go
-through governance, and the framework already implements those semantics — duplicating them here
+through governance, and the framework implements those semantics — duplicating them here
 would mean two implementations drifting apart. Teardown likewise goes through the framework's
 governed cleanup, because a bare `DELETE` on an IGA realm is intercepted and silently does nothing.
 
@@ -122,8 +123,27 @@ change requests, and exchanges a token over mTLS.
 | `ASGARD_EXAMPLE_URL` | URL the test server listens on — must match the frontend client's origin | `http://localhost:3000` |
 | `KEEP_REALM` | Set to leave the realm up after the run | unset |
 
+## Running the negative suite
+
+```bash
+npm run test:negative
+```
+
+[tests/negative.spec.ts](tests/negative.spec.ts) sends a running Asgard requests it must turn away, one per test, in
+three groups: DPoP, mTLS and resource delegation. Each group starts with a request that gets through, and every other
+request differs from it in one way.
+
+Nothing is faked and no Tide account is used. [tests/negative.setup.ts](tests/negative.setup.ts) provisions two realms
+from [recipes/asgard-negative.recipe.json](recipes/asgard-negative.recipe.json) and
+[recipes/asgard-other-realm.recipe.json](recipes/asgard-other-realm.recipe.json), enrolls Asgard's certificate and two
+callers' through the realm's change requests, and starts [negativeserver/](negativeserver/) - Asgard with
+`Binding.DPoP | Binding.mTLS`, DPoP over http and mTLS over https. The tokens are a plain password user's; the
+certificate-bound ones come from a token exchange over mTLS, as Asgard's own do. The keys and certificates live in
+`$TMPDIR/asgard-negative-suite`, and [tests/negative.teardown.ts](tests/negative.teardown.ts) deletes them and tears the
+realms down - unless `KEEP_REALM` is set.
+
 ## Known blocker
 
-The local stack currently cannot provision a Tide realm — `setUpTideRealm` fails with
-`TIDE-IDPEXT-VENDOR-KEYGEN_FAILED`, from `Midgard.FinalizeWallet: signature failed`. Until that is
-resolved, the harness's second test cannot go green. It is a stack problem, not a harness one.
+The local stack cannot provision a Tide realm — `setUpTideRealm` fails with
+`TIDE-IDPEXT-VENDOR-KEYGEN_FAILED`, from `Midgard.FinalizeWallet: signature failed` — so the
+harness's second test cannot go green. It is a stack problem, not a harness one.

@@ -10,8 +10,8 @@ public enum AsgardErrorCode
 	DokenNotFound,
 	InvalidDoken,
 
-	DPoPDelegationProofNotFound,
-	DPoPDelegationInvalid,
+	DelegationProofNotFound,
+	DelegationInvalid,
 
 	TideEnclaveApprovalNotFound,
 	TideSessionKeyNotFound,

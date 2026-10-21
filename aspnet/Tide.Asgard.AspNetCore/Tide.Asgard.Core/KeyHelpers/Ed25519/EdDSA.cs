@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 
 namespace Tide.Asgard.Core.Crypto.Ed25519;
 
-public class EdDsa : AsymmetricAlgorithm
+internal class EdDsa : AsymmetricAlgorithm
 {
 	internal EdDsaParameters Parameters { get; private init; }
 	internal AsymmetricKeyParameter PrivateKeyParameter { get; private init; }

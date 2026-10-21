@@ -12,7 +12,8 @@
 
 <p align="center">
   <a href="GETTING_STARTED.md">Getting started</a> ·
-  <a href="aspnet/Tide.Asgard.AspNetCore/Examples/Secured%20Agent/">Secured Agent Example</a>
+  <a href="USAGE.md">Usage</a> ·
+  <a href="aspnet/Tide.Asgard.AspNetCore/Examples/">Examples</a>
 </p>
 
 With Asgard, your application can verify TideCloak logins, encrypt and decrypt data without ever holding the key (**ineffable locking**), and securely exchange tokens between services.
@@ -75,8 +76,8 @@ A service's mTLS-bound token delegates to services downstream, so they can act o
 | Package | Framework | Language
 | --- | --- | --- |
 | [Link](aspnet/Tide.Asgard.AspNetCore/README.md) | ASP.NET | C#
-| Here (coming soon) | Python | Python
-| Here (coming soon) | NextJS | Typescript
+| Planned | Python | Python
+| Planned | NextJS | Typescript
 
 ## How does this all work?
 ### Asgard mTLS certificate auto-registration
@@ -102,7 +103,7 @@ sequenceDiagram
 
     loop Until approved
         Backend->>TideCloak: Has resource identity been approved?
-        TideCloak-->>Backend: Not yet
+        TideCloak-->>Backend: Not approved
     end
 
     Admins->>TideCloak: Approve certificate request
@@ -195,10 +196,17 @@ The .NET solution lives at [aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln](aspne
 
 | Project | Purpose |
 |---|---|
-| [Tide.Asgard.AspNetCore.Authentication](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/) | Main SDK — service-collection extensions, Ed25519 helpers, locking, token exchange |
+| [Tide.Asgard.AspNetCore.Authentication](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/) | Main SDK — `AddAsgard`, DPoP- and mTLS-bound token validation, resource delegation, locking, policies, token exchange |
 | [Tide.Asgard.Core](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/) | Cryptography primitives (Ed25519 / EdDSA), policy helpers |
-| [Tide.Asgard.AspNetCore.DPoP](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.DPoP/) | DPoP (proof-of-possession) support |
-| [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) | End-to-end working sample |
+| [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) | End-to-end sample |
+
+The [example apps](aspnet/Tide.Asgard.AspNetCore/Examples/) each have their own projects and README:
+
+| Example | Shows |
+|---|---|
+| [StandardResourceDelegation](aspnet/Tide.Asgard.AspNetCore/Examples/StandardResourceDelegation/) | A backend fetching TideCloak's user list on behalf of the logged-in user |
+| [LockingUserDataWithTide](aspnet/Tide.Asgard.AspNetCore/Examples/LockingUserDataWithTide/) | Adding a policy at first use, and locking user data with the Tide network |
+| [ResourceToResourceDelegation](aspnet/Tide.Asgard.AspNetCore/Examples/ResourceToResourceDelegation/) | A web app storing locked patient data, and calling an analytics service for the user over mTLS — dockerized |
 
 
 ## License

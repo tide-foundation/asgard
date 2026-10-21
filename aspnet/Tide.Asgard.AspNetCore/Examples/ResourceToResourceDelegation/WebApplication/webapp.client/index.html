@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Web application</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 15px/1.5 system-ui, sans-serif; max-width: 720px; margin: 48px auto; padding: 0 16px; }
+      h1 { font-size: 20px; margin: 0; }
+      h2 { font-size: 16px; margin: 32px 0 4px; }
+      #status, dt, section p { color: GrayText; }
+      #status { margin: 4px 0 24px; }
+      section p { margin: 0 0 12px; }
+      input, textarea, button { font: inherit; padding: 4px 12px; }
+      #add-patient { display: grid; grid-template-columns: 1fr 96px; gap: 8px; }
+      #add-patient > :nth-child(n+3) { grid-column: 1 / -1; }
+      #add-patient button { justify-self: start; }
+      #summaries { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+      #summaries input { flex: 1 1 240px; }
+      dt { font-size: 13px; margin-top: 24px; }
+      dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+      [role=alert] { --tone: orange; margin: 24px 0 0; padding: 12px 16px; border: 1px solid var(--tone); border-left-width: 6px; border-radius: 6px; background: color-mix(in srgb, var(--tone) 15%, transparent); overflow-wrap: anywhere; }
+      [role=alert].error { --tone: crimson; }
+      [role=alert] strong { display: block; }
+    </style>
+  </head>
+  <body>
+    <h1>Web application</h1>
+    <p id="status">Logging in...</p>
+
+    <section>
+      <h2>Add a patient</h2>
+      <p>
+        The backend has the Tide Network lock the patient's details, and stores only the ciphers: name, age and
+        address together, the age on its own, and the medical details.
+      </p>
+      <form id="add-patient">
+        <input name="name" placeholder="Name" required>
+        <input name="age" type="number" min="0" max="150" placeholder="Age" required>
+        <input name="address" placeholder="Address" required>
+        <textarea name="medicalDetails" rows="3" placeholder="Medical details" required></textarea>
+        <button disabled>Add patient</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Get Data Analytics</h2>
+      <p>Web application server queries analytics server under your session context (through delegation).</p>
+      <form id="summaries">
+        <input name="patientId" placeholder="Patient id" required>
+        <button value="MedicalSummary" disabled>Medical summary</button>
+        <button value="PersonalSummary" disabled>Personal summary</button>
+      </form>
+      <!-- sends only the age ciphers, which say nothing about whose age they are -->
+      <button id="average-age" disabled>Average age of all patients</button>
+    </section>
+
+    <p role="alert" hidden></p>
+    <dl id="result" hidden>
+      <dt></dt>
+      <dd></dd>
+    </dl>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

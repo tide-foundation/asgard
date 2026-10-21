@@ -1,0 +1,88 @@
+# The example in containers: the web application, the analytics service it calls, and the Postgres database the web
+# application keeps its encrypted patient records and locking policy in. TideCloak is not part of it - the apps use
+# the TideCloak you already run on this machine.
+#
+#   docker compose up --build
+
+name: resource-to-resource-delegation
+
+services:
+  # The network both apps share, standing in for your machine's. Their adapter configs find TideCloak at
+  # localhost:8080 and the Tide network's ORKs at localhost:1001-1005, and Asgard reaches TideCloak over mTLS at
+  # {realm}.client.localhost:8443 - but inside a container, localhost is the container. This forwards those ports to
+  # your machine, so localhost means the same to the apps as it does to dotnet run.
+  network:
+    image: alpine/socat:1.8.0.3
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        for port in 8080 8443 1001 1002 1003 1004 1005; do
+        socat TCP6-LISTEN:$$port,ipv6only=0,fork,reuseaddr TCP:host.docker.internal:$$port &
+        done; wait
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # your machine - Docker Desktop has this name already, Docker on Linux does not
+      - "hostgateway:host-gateway" # your machine again, by the name TideCloak gives the ORKs (orkUrl)
+      - "${TIDECLOAK_REALM:?Set TIDECLOAK_REALM in .env to your TideCloak realm's name}.client.localhost:127.0.0.1"
+    ports:
+      - "3000:3000" # the web application. The analytics service is only reachable from it
+
+  webapp:
+    build:
+      context: ../.. # the Asgard SDK folder, whose projects the app builds against
+      dockerfile: Examples/ResourceToResourceDelegation/WebApplication/WebApp.Server/Dockerfile
+      # The checkouts the SDK and the frontend link to, which sit beside this repo. Relative paths rather than ${HOME},
+      # so they still resolve under sudo, where HOME is /root.
+      additional_contexts:
+        ork: ../../../../../project/ork
+        tidecloak-js: ../../../../../tidecloak-js
+        heimdall: ../../../../../heimdall
+        tide-js: ../../../../../project/tide-js
+    network_mode: service:network
+    environment:
+      ConnectionStrings__DefaultConnection: Host=postgres;Database=webapp;Username=webapp;Password=webapp
+    volumes:
+      - ./WebApplication/WebApp.Server/appsettings.json:/app/appsettings.json:ro # the adapter config
+      - webapp-identity:/app/identity
+    depends_on:
+      postgres:
+        condition: service_healthy
+      analytics:
+        condition: service_started
+
+  analytics:
+    build:
+      context: ../..
+      dockerfile: Examples/ResourceToResourceDelegation/AnalyticsService/Dockerfile
+      additional_contexts:
+        ork: ../../../../../project/ork
+    network_mode: service:network
+    environment:
+      # a login that can only read the patients table - see Database/schema.sql
+      ConnectionStrings__DefaultConnection: Host=postgres;Database=webapp;Username=analytics;Password=analytics
+    volumes:
+      - ./AnalyticsService/appsettings.json:/app/appsettings.json:ro # the adapter config
+      - analytics-identity:/app/identity
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: webapp
+      POSTGRES_USER: webapp
+      POSTGRES_PASSWORD: webapp
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./Database:/docker-entrypoint-initdb.d:ro # creates the tables on first start
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "webapp", "-d", "webapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Not published on your machine, where 5432 is often taken. To look inside: docker compose exec postgres psql -U webapp
+
+volumes:
+  webapp-identity: # each app's Asgard identity, so it stays enrolled when its container is recreated
+  analytics-identity:
+  postgres-data:

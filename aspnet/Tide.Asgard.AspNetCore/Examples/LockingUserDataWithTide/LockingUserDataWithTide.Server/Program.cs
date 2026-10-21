@@ -1,24 +1,17 @@
 using System.Text;
-using Keycloak.AuthServices.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Ork.Models;
 using Tide.Asgard.AspNetCore.Authentication;
+using Tide.Asgard.AspNetCore.Authentication.SetupHelpers;
 using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
-using Tide.Asgard.AspNetCore.DPoP;
 using Tide.Asgard.Core.PolicyHelpers;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
-builder.Services
-	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
-	{
-		options.RequireHttpsMetadata = false; // local dev only
-		options.TokenValidationParameters.IssuerSigningKey = builder.Configuration.GetEd25519IssuerKey();
-	})
-	.WithDPoP(options => options.Mode = DPoPModes.Required);
-builder.Services.AddAsgard(builder.Configuration, ResourceAuthenticationMode.AutoMTLSEnrollment);
+builder.AddAsgard(options => options.RequireHttpsMetadata = false) // local dev only
+	.RequireTokenBinding(options => options.SupportBindings = Binding.DPoP); // only DPoP-bound tokens are accepted
 builder.Services.AddScoped<TidecloakPolicyProvider>(); // keeps policies in TideCloak
 builder.Services.AddProblemDetails(); // required by UseExceptionHandler
 
@@ -34,7 +27,7 @@ var app = builder.Build();
 app.UseExceptionHandler(); // required by Asgard, which reports its errors through it
 app.UseDefaultFiles(); // the frontend, which the client project builds into wwwroot/
 app.UseStaticFiles();
-app.UseTideSecuredDPoP(builder.Configuration, "browser-login-page"); // the id of the public client the frontend logs in with
+app.UseTide_over_DPoP(builder.Configuration, "browser-login-page"); // the id of the public client the frontend logs in with
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
@@ -52,12 +45,12 @@ public record LockingPolicy(string Id, ReadOnlyMemory<byte> Data)
 [ApiController]
 public class LockingController(IAspAsgardService asgard, TidecloakPolicyProvider policies, LockingPolicy policy) : ControllerBase
 {
-	[RequireExchangeApproval(ApprovalRequirement.TideSecuredDPoP)] // the caller must have delegated to this backend, signed by their Tide session key too - answers 401 until their browser has
+	[RequireExchangeApproval(ApprovalRequirement.TideEnabled)] // the caller must have delegated to this backend, signed by their Tide session key too - answers 401 until their browser has
 	[HttpPost("lock")]
 	public async Task<IActionResult> Lock(LockRequest request)
 	{
 		// add the policy to TideCloak if it hasn't been added yet - the provider reaches TideCloak as this backend, acting for the caller
-		policies.SetAuthentication(await asgard.GetApplicationAccessToken());
+		policies.SetAuthentication(await asgard.ExchangeContextTokenForApplicationToken());
 		if (await policies.GetPolicy(policy.Id) is null)
 		{
 			// TideCloak answers with a change request when the realm wants a quorum of admins to approve the policy first

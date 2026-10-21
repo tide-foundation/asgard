@@ -1,8 +1,6 @@
 using System.Text;
-using Keycloak.AuthServices.Authentication;
 using Tide.Asgard.AspNetCore.Authentication;
-using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
-using Tide.Asgard.AspNetCore.DPoP;
+using Tide.Asgard.AspNetCore.Authentication.SetupHelpers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -42,7 +40,7 @@ foreach (var required in new[] { backendAdaptor, frontendAdaptor })
 }
 
 // The downloaded adaptor is a BARE object, but Keycloak.AuthServices reads its
-// settings from a "Keycloak" section — and UseTideSecuredDPoP hardcodes the
+// settings from a "Keycloak" section — and UseTide_over_DPoP hardcodes the
 // "Keycloak:" prefix — so nest it in memory instead of rewriting the file.
 //
 // This source is added LAST, so any key it carries beats appsettings.json. It
@@ -53,18 +51,13 @@ builder.Configuration.AddJsonStream(
 
 builder.Services.AddControllers();
 
-builder.Services
-	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
-	{
-		// The local stack is plain http, and the realm signs EdDSA — a key type
-		// the stock JWKS path does not resolve, so it comes from the adaptor.
-		options.RequireHttpsMetadata = false;
-		options.TokenValidationParameters.IssuerSigningKey =
-			Utils.GetEd25519IssuerKey(builder.Configuration);
-	})
-	.WithDPoP(opts => opts.Mode = DPoPModes.Required);
-
-builder.Services.AddAsgard(builder.Configuration, ResourceAuthenticationMode.AutoMTLSEnrollment); // needed
+// The realm signs EdDSA — a key type the stock JWKS path does not resolve — so
+// AddAsgard takes the issuer key from the adaptor. RequireTokenBinding is what
+// registers the rest of Asgard (enrollment, token exchange), and with DPoP only
+// it refuses any token that is not DPoP-bound.
+builder
+	.AddAsgard(options => options.RequireHttpsMetadata = false) // the local stack is plain http
+	.RequireTokenBinding(options => options.SupportBindings = Binding.DPoP);
 
 // ---------------------------------------------------------------------------
 // mTLS VHOST RESOLUTION (test environment only)
@@ -139,7 +132,7 @@ app.MapGet("/keycloak.json", () =>
 	Results.Text(File.ReadAllText(frontendAdaptor), "application/json"));
 
 // Serves the embedded Tide DPoP auth page the enclave loads during login.
-app.UseTideSecuredDPoP(builder.Configuration, "frontend");
+app.UseTide_over_DPoP(builder.Configuration, "frontend");
 
 app.UseAuthentication();
 app.UseAuthorization();

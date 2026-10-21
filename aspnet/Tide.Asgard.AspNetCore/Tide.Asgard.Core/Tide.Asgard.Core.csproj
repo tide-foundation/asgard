@@ -36,4 +36,9 @@
     <ProjectReference Include="..\..\..\..\project\ork\Ork.Clients\Ork.Clients.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- the SDK uses Core's internals; applications only see what they need -->
+    <InternalsVisibleTo Include="Tide.Asgard.AspNetCore.Authentication" />
+  </ItemGroup>
+
 </Project>

@@ -7,7 +7,7 @@
 > 127.0.0.1   {realm}.client.localhost
 > ```
 
-A React page ([App.jsx](lockinguserdatawithtide.client/src/App.jsx)) logs the user in with tidecloak-js and calls the backend's one endpoint, `POST /lock` ([Program.cs](LockingUserDataWithTide.Server/Program.cs)). The backend creates the policy when it starts, and adds it to TideCloak the first time something is locked. `POST /lock` then locks the text the user typed under that policy and returns the cipher - the Tide Network does the locking, so the backend never holds the key, and it stores nothing. The flow is drawn in [Encryption](../../../../README.md#encryption). There is no unlocking: the SDK does not have it yet.
+A React page ([App.jsx](lockinguserdatawithtide.client/src/App.jsx)) logs the user in with tidecloak-js and calls the backend's one endpoint, `POST /lock` ([Program.cs](LockingUserDataWithTide.Server/Program.cs)). The backend creates the policy when it starts, and adds it to TideCloak the first time something is locked. `POST /lock` then locks the text the user typed under that policy and returns the cipher - the Tide Network does the locking, so the backend never holds the key, and it stores nothing. The flow is drawn in [Encryption](../../../../README.md#encryption). There is no unlocking: the SDK has no unlock API.
 
 ## Set up TideCloak
 

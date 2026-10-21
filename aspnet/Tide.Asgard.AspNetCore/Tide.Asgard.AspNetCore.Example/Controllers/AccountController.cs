@@ -10,7 +10,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 {
 	[Authorize]
 	[ApiController]
-	[RequireExchangeApproval(ApprovalRequirement.TideSecuredDPoP)]
+	[RequireExchangeApproval(ApprovalRequirement.TideEnabled)]
 	[Route("[controller]")]
 	public class AccountController(IAspAsgardService asgardService) : ControllerBase
 	{
@@ -52,7 +52,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 			//var cipherButDifferentFetch = response.LockedItems.First().Cipher;
 
 			// if i want to contact another asgard enabled service
-			//var client = asgardService.GetHttpClient();
+			//var client = asgardService.GetHttpClient("another service");
 			//await client.GetAsync("");
 
 			return Ok(cipher);

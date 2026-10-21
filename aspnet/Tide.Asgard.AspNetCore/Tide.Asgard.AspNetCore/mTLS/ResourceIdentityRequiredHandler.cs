@@ -6,7 +6,7 @@ using Tide.Asgard.Core;
 
 namespace Tide.Asgard.AspNetCore.Authentication.mTLS;
 
-public sealed class ResourceIdentityRequiredHandler(CertificateRegisterSingleton register, ILogger<ResourceIdentityRequiredHandler> logger) : DelegatingHandler
+internal sealed class ResourceIdentityRequiredHandler(CertificateRegisterSingleton register, ILogger<ResourceIdentityRequiredHandler> logger) : DelegatingHandler
 {
 	protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
 	{

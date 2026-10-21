@@ -445,7 +445,7 @@ test.describe('mTLS token exchange', () => {
 
         // Three things have to hold for this 200:
         //  - the DPoP delegation challenge was answered (fetch retries
-        //    with DPoP-Resource-Delegation), else 401 DPoPDelegationProofNotFound;
+        //    with Resource-Delegation), else 401 DelegationProofNotFound;
         //  - the app authenticated to TideCloak with its enrolled client
         //    certificate — this is the mTLS assertion;
         //  - exchange v2 accepted the subject token, which requires `backend`

@@ -41,9 +41,9 @@ function show(authenticated, kc) {
  * @param label prefix for the log line, so the test can match on it
  *
  * fetch attaches the DPoP proof; a bare Authorization header would be
- * rejected, since the server runs DPoPModes.Required. For /Hello/exchange it
- * ALSO answers the server's resource delegation challenge and retries with a
- * DPoP-Resource-Delegation header — all in-browser, no enclave popup.
+ * rejected, since the server only accepts DPoP-bound tokens. For /Hello/exchange
+ * it ALSO answers the server's resource delegation challenge and retries with a
+ * Resource-Delegation header — all in-browser, no enclave popup.
  */
 async function call(kc, path, label) {
   try {

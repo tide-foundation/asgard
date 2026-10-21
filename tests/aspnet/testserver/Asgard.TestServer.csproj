@@ -8,14 +8,12 @@
   </PropertyGroup>
 
   <!--
-    The two Asgard packages this server actually needs:
-      DPoP            -> .WithDPoP() and .UseTideSecuredDPoP()
-      Authentication  -> Utils.GetEd25519IssuerKey()
-    Tide.Asgard.Core and Ork.Clients come in transitively. Nothing else is
-    referenced on purpose: no Ork.Models, no policy stack.
+    The one Asgard package this server needs, for .AddAsgard().RequireTokenBinding()
+    and .UseTide_over_DPoP(). Tide.Asgard.Core and Ork.Clients come in
+    transitively. Nothing else is referenced on purpose: no Ork.Models, no
+    policy stack.
   -->
   <ItemGroup>
-    <ProjectReference Include="../../../aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.DPoP/Tide.Asgard.AspNetCore.DPoP.csproj" />
     <ProjectReference Include="../../../aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Authentication.csproj" />
   </ItemGroup>
 
