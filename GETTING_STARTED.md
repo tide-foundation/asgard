@@ -89,6 +89,8 @@ app.Run();
 
 `AddAsgard` sets up token validation for your realm. TideCloak signs tokens with EdDSA (Ed25519), which .NET can't validate on its own, so Asgard takes the signing key from your adapter config — there is nothing to configure. The optional action changes anything else about the JWT bearer validation; here it lets a plain-http TideCloak through during development.
 
+Under the hood, `AddAsgard` calls `AddKeycloakWebApiAuthentication` from [Keycloak.AuthServices](https://github.com/nikiforovall/keycloak-authorization-services-dotnet) with your adapter config. The caller arrives as `User` just as in any Keycloak-protected API, and Keycloak.AuthServices' role-based authorization works on it too — see [Use the caller's identity and roles](USAGE.md#use-the-callers-identity-and-roles).
+
 `RequireTokenBinding` sets which tokens your API accepts, and registers everything the [usage guide](USAGE.md) builds on: `IAspAsgardService` for locking, a policy provider backed by TideCloak, the token exchange service, and an exception handler that translates Asgard errors into `Asgard-*` response headers (which is why `app.UseExceptionHandler()` is required). Always call it.
 
 ### Token binding

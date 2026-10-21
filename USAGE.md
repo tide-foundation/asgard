@@ -37,6 +37,44 @@ public class ProfileController : ControllerBase
 
 A request without a valid, bound token — from a browser, a DPoP-bound token with its DPoP proof — never reaches your action.
 
+### Use the caller's identity and roles
+
+Asgard validates tokens with [Keycloak.AuthServices](https://github.com/nikiforovall/keycloak-authorization-services-dotnet): `AddAsgard` calls its `AddKeycloakWebApiAuthentication` with your adapter config, and adds the token binding checks on top. So `User` is the same `ClaimsPrincipal` any Keycloak-protected API gets — the token's claims (`sub`, `email`, `preferred_username`, …), with `User.Identity.Name` set to `preferred_username`.
+
+Keycloak.AuthServices' authorization works on it too, and comes with Asgard — there is no package to add. Register it in `Program.cs`, then require roles in policies:
+
+```csharp
+using Keycloak.AuthServices.Authorization;
+
+builder.Services
+    .AddAuthorization()
+    .AddKeycloakAuthorization(builder.Configuration)
+    .AddAuthorizationBuilder()
+    .AddPolicy("hr-admins", policy => policy.RequireRealmRoles("hr-admin"))
+    .AddPolicy("payroll-editors", policy => policy.RequireResourceRoles("payroll-editor"));
+```
+
+```csharp
+[Authorize(Policy = "hr-admins")]
+[HttpDelete("{id}")]
+public IActionResult Delete(int id)
+```
+
+- `RequireRealmRoles` checks the caller's realm roles.
+- `RequireResourceRoles` checks their roles on your backend's client — the `resource` in your adapter config. For another client's roles, use `RequireResourceRolesForClient("other-client", ["role"])`.
+
+For `[Authorize(Roles = "...")]` and `User.IsInRole`, have Keycloak.AuthServices map the roles to ASP.NET Core roles with `EnableRolesMapping` in the `Keycloak` section — `Realm` for realm roles, `ResourceAccess` for your backend client's roles, `All` for both:
+
+```json
+{
+  "Keycloak": {
+    "EnableRolesMapping": "All"
+  }
+}
+```
+
+The roles come from the token's `realm_access` and `resource_access` claims, which Keycloak's `roles` client scope adds. The [Keycloak.AuthServices authorization docs](https://nikiforovall.blog/keycloak-authorization-services-dotnet/configuration/configuration-authorization.html) cover the rest of what it offers.
+
 ### Let your backend act for the caller
 
 Locking data, managing policies and exchanging tokens all need your backend to act **on the caller's behalf**. The caller has to approve that first, and `[RequireExchangeApproval]` is how you ask:

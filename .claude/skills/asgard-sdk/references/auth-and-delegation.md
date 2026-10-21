@@ -23,6 +23,11 @@ app.MapControllers();
 - The adapter config (downloaded from TideCloak) goes in the `Keycloak` section, or in the `TIDECLOAK_JSON` env var.
 - `AddAsgard` sets up Keycloak JWT validation with the realm's Ed25519 key from the adapter config. Its optional action
   configures `JwtBearerOptions`.
+- That validation is Keycloak.AuthServices' `AddKeycloakWebApiAuthentication`, so `User` is a Keycloak.AuthServices
+  principal (`Identity.Name` = `preferred_username`, role claim type `role`). `Keycloak.AuthServices.Authorization` comes
+  with the SDK: `AddKeycloakAuthorization(builder.Configuration)` gives `RequireRealmRoles`, `RequireResourceRoles` (on
+  the adapter's `resource`), `RequireResourceRolesForClient(client, [roles])`, and role mapping through
+  `EnableRolesMapping` (`Realm`, `ResourceAccess`, `All`) in the `Keycloak` section.
 - `RequireTokenBinding` is what registers Asgard's services and starts enrollment, so `AddAsgard()` alone gives you no
   `IAspAsgardService`. Enrollment is automatic.
 - Bindings: `Binding.DPoP` (browsers), `Binding.mTLS` (other Asgard backends), or both. A token bound neither way is
