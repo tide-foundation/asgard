@@ -22,14 +22,6 @@ builder
 
 builder.Services.AddControllers();
 
-
-// we let the developer define the custom root ca path and all that like we did with dpop
-// var rootCa = AsgardCertificateLoader.LoadRootCertificate(builder.Configuration); // needed for mtls
-
-
-builder.Services.AddScoped<TidecloakPolicyProvider>(); // needed
-builder.Services.AddProblemDetails(); // needed
-
 var app = builder.Build();
 
 app.UseExceptionHandler(); // needed
