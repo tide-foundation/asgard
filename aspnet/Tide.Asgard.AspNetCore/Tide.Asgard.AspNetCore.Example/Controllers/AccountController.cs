@@ -38,9 +38,9 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 					Data = Encoding.UTF8.GetBytes("Janet"),
 				});
 
-			LockResponse response = await asgardService.CreateLockContext(lockOptions)
+			LockResponse response = await asgardService.CreateLockContext()
 				.UsePolicy(PolicyController.GetPolicyId())
-				.Lock();
+				.Lock(lockOptions);
 
 			// get the cipher from the encrypted response
 			var cipher = response.GetLockedItemById("id1").Cipher;
@@ -56,6 +56,44 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 			//await client.GetAsync("");
 
 			return Ok(cipher);
+		}
+		[HttpGet("Decrypt")]
+		public async Task<IActionResult> DecryptAccount()
+		{
+			if (EncryptedData is null)
+			{
+				return Ok("Nothing has been encrypted yet");
+			}
+
+			// set up encryption options
+			var lockOptions = new UnlockOptions()
+				.AddItemToUnlock(new ItemToUnlock
+				{
+					ItemId = "id1",
+					Tags = ["staff", "date of birth"],
+					Data = EncryptedData.Value.dob,
+				})
+				.AddItemToUnlock(new ItemToUnlock
+				{
+					ItemId = "id2",
+					Tags = ["staff", "name"],
+					Data = EncryptedData.Value.name,
+				});
+
+			UnlockResponse response = await asgardService.CreateLockContext()
+				.UsePolicy(PolicyController.GetPolicyId())
+				.Unlock(lockOptions);
+
+			// get the plain text from the unlocked response
+			var dob = Encoding.UTF8.GetString(response.GetUnlockedItemById("id1").PlainText.Span);
+
+			var name = Encoding.UTF8.GetString(response.GetUnlockedItemById("id2").PlainText.Span);
+
+			// if i want to contact another asgard enabled service
+			//var client = asgardService.GetHttpClient("another service");
+			//await client.GetAsync("");
+
+			return Ok(dob + "|"  + name);
 		}
 	}
 }

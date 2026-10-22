@@ -12,7 +12,7 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 	[ApiController]
 	[RequireExchangeApproval(ApprovalRequirement.Basic)]
 	[Route("[controller]")]
-	public class PolicyController(IAspAsgardService asgardService, TidecloakPolicyProvider policyProvider) : Controller
+	public class PolicyController(IAspAsgardService asgardService, IPolicyProvider policyProvider) : Controller
 	{
 		private static readonly string PolicyId = Guid.NewGuid().ToString();
 
@@ -33,8 +33,9 @@ namespace Tide.Asgard.AspNetCore.Example.Controllers
 
 			policyBuiler.BypassExplicitUserConsent();
 			policyBuiler.UseForEncyption();
+			policyBuiler.UseForDecryption();
 
-			var CRid = await policyProvider.AddPolicyWithChangeRequest(PolicyId, policyBuiler.BuildPolicy());
+			var CRid = await ((TidecloakPolicyProvider)policyProvider).AddPolicyWithChangeRequest(PolicyId, policyBuiler.BuildPolicy());
 
 			return Ok(CRid);
 		}

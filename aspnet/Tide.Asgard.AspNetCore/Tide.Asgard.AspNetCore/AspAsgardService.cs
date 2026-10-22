@@ -20,10 +20,10 @@ internal class AspAsgardService(
 	AsgardSettings asgardSettings
 	) : IAspAsgardService
 {
-	public ILockContext CreateLockContext(LockOptions lockOptions) => CreateLockContext(lockOptions, null);
-	public ILockContext CreateLockContext(LockOptions lockOptions, string? clientIdForContext = null)
+	public ILockContext CreateLockContext() => CreateLockContext(null);
+	public ILockContext CreateLockContext(string? clientIdForContext = null)
 	{
-		var context = new AspLockContext(asgardCache, tideClientManagerProvider, lockOptions, httpContextAccessor, tokenExchangeService, asgardSettings);
+		var context = new AspLockContext(asgardCache, tideClientManagerProvider, httpContextAccessor, tokenExchangeService, asgardSettings);
 		if (clientIdForContext != null) context.ForClient(clientIdForContext);
 		return context;
 	}

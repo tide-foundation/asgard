@@ -13,7 +13,6 @@ namespace Tide.Asgard.AspNetCore.Authentication.Locking;
 internal class AspLockContext(
 	IAsgardCache asgardCache,
 	TideClientManagerProvider tideClientManagerProvider,
-	LockOptions lockOptions,
 	IHttpContextAccessor httpContextAccessor,
 	ITokenExchangeService tokenExchangeService,
 	AsgardSettings asgardSettings
@@ -36,7 +35,7 @@ internal class AspLockContext(
 		Client = clientId;
 		return this;
 	}
-	public async Task<LockResponse> Lock()
+	public async Task<LockResponse> Lock(LockOptions lockOptions)
 	{
 		// need to get the application's tide token to initialize the lock manager AND authenticate the cache policy provider (by providing exchanged token in cache)
 		var (applicationToken, applicationDoken) = await GetApplicationTokenAndDoken();
@@ -50,6 +49,21 @@ internal class AspLockContext(
 
 		var lockClient = tideClientManagerProvider.GetLockClientManager(applicationDoken);
 		return await lockClient.Lock(lockOptions);
+	}
+	public async Task<UnlockResponse> Unlock(UnlockOptions unlockOptions)
+	{
+		// need to get the application's tide token to initialize the lock manager AND authenticate the cache policy provider (by providing exchanged token in cache)
+		var (applicationToken, applicationDoken) = await GetApplicationTokenAndDoken();
+
+		if (asgardCache.PolicyProvider.isAuthenticated == false)
+		{
+			asgardCache.PolicyProvider.SetAuthentication(applicationToken);
+		}
+
+		if (PolicyId != null) unlockOptions.Policy = await asgardCache.GetPolicy(PolicyId);
+
+		var lockClient = tideClientManagerProvider.GetLockClientManager(applicationDoken);
+		return await lockClient.Unlock(unlockOptions);
 	}
 	private async Task<(string, string)> GetApplicationTokenAndDoken()
 	{

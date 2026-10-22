@@ -9,7 +9,6 @@ namespace Tide.Asgard.Core;
 
 public interface IAsgardService
 {
-	ILockContext CreateLockContext(LockOptions lockOptions);
-	// then we'll create Unlock Contexts + Sign Contexts
+	ILockContext CreateLockContext();
 	AsgardSettings GetSettings();
 }

@@ -8,7 +8,7 @@ namespace Tide.Asgard.AspNetCore.Authentication;
 
 public interface IAspAsgardService : IAsgardService
 {
-	public ILockContext CreateLockContext(LockOptions lockOptions, string? clientIdForContext = null);
+	public ILockContext CreateLockContext(string? clientIdForContext = null);
 	/// <summary>
 	/// An http client that calls another resource over mutual TLS and manages resource delegation flows for you.
 	/// <param name="resourceClientId">The client id of the resource to call.</param>

@@ -155,9 +155,9 @@ public class EmployeesController(IAspAsgardService asgardService, AppDbContext d
                 Data = Encoding.UTF8.GetBytes(request.MedicalNotes),
             });
 
-        LockResponse response = await asgardService.CreateLockContext(lockOptions)
+        LockResponse response = await asgardService.CreateLockContext()
             .UsePolicy("hr-staff-data-policy")
-            .Lock();
+            .Lock(lockOptions);
 
         db.Employees.Add(new Employee
         {

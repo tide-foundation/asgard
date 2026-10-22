@@ -10,6 +10,7 @@ namespace Tide.Asgard.Core;
 public interface ILockContext
 {
 	ILockContext UsePolicy(string policyId);
-	Task<LockResponse> Lock();
+	Task<LockResponse> Lock(LockOptions lockOptions);
+	Task<UnlockResponse> Unlock(UnlockOptions unlockOptions);
 }
 
