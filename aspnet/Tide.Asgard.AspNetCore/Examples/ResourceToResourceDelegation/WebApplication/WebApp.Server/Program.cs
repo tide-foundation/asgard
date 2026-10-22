@@ -23,12 +23,13 @@ builder.Services.AddNpgsqlDataSource(builder.Configuration.GetConnectionString("
 	?? throw new InvalidOperationException("Missing the connection string 'DefaultConnection'. docker compose provides it - see the README."));
 builder.Services.AddSingleton<Database>();
 
-// Create the policy that data is locked under. It can only be added to TideCloak on behalf of a logged-in user,
-// so the setup endpoint adds it.
+// Create the policy patient records are locked and unlocked under. It can only be added to TideCloak on behalf of a
+// logged-in user, so the setup endpoint adds it.
 var policy = new PolicyBuilder(builder.Configuration["Keycloak:vendorId"]!, "SimpleTagBasedDecryption:1");
 policy.BypassExplicitUserConsent(); // using the policy needs no explicit approval from other Tide users
-policy.UseForEncyption(); // the policy may serve locking requests
-builder.Services.AddSingleton(new LockingPolicy("locking-user-data-example", policy.BuildPolicy()));
+policy.UseForEncyption(); // the policy may serve locking requests - this app's
+policy.UseForDecryption(); // and unlocking requests - the analytics service's
+builder.Services.AddSingleton(new LockingPolicy("patient-records-policy", policy.BuildPolicy()));
 
 var app = builder.Build();
 
@@ -49,7 +50,7 @@ public record EncryptedPatient(byte[] EncPatientInfo, byte[] EncAge, byte[] EncM
 [Authorize]
 [ApiController]
 [Route("server")]
-public class ServerController(IAspAsgardService asgard, TidecloakPolicyProvider policies, LockingPolicy policy, Database database, IHttpClientFactory httpClientFactory) : ControllerBase
+public class ServerController(IAspAsgardService asgard, TidecloakPolicyProvider policies, LockingPolicy policy, Database database) : ControllerBase
 {
 	public record Patient(string Name, int Age, string Address, string MedicalDetails);
 	public record PatientInfo(string Name, int Age, string Address);
@@ -127,69 +128,35 @@ public class ServerController(IAspAsgardService asgard, TidecloakPolicyProvider 
 	}
 	
 	/// <summary>
-	/// Get a medical summary from the agent service regarding a specific patien'ts medical details.
+	/// Get a medical summary from the analytics service, which unlocks only the patient's medical details.
 	/// </summary>
-	/// <param name="patientId"></param>
-	/// <returns></returns>
-	[RequireExchangeApproval(ApprovalRequirement.TideEnabled, "analytics")] // need tide delegation to delegate AGAIN for the agent resource (so agent can decrypt)
+	[RequireExchangeApproval(ApprovalRequirement.TideEnabled, "analytics")] // need tide delegation to delegate AGAIN for the analytics resource (so it can unlock)
 	[HttpGet("MedicalSummary")]
-	public async Task<IActionResult> MedicalSummary([FromQuery] Guid patientId)
-	{
-		var patient = await database.GetPatient(patientId);
-		if (patient is null) return NotFound();
-
-		// send request to agent service to get medical summary, given the encrypted patient medical details
-		var asgardClient = asgard.GetHttpClient("agent");
-		var response = await asgardClient.PostAsJsonAsync("http://localhost:3001/analytics/medical", patient.EncMedicalDetails);
-		response.EnsureSuccessStatusCode();
-		return Ok(await response.Content.ReadAsStreamAsync());
-	}
+	public Task<IActionResult> MedicalSummary([FromQuery] Guid patientId) => AskAnalytics($"medical?id={patientId}");
 
 	/// <summary>
-	/// Get a personal summary from the agent service regarding a patient's personal details.
+	/// Get a personal summary from the analytics service, which unlocks the patient's name, age and address.
 	/// </summary>
-	/// <param name="patientId"></param>
-	/// <returns></returns>
-	[RequireExchangeApproval(ApprovalRequirement.TideEnabled, "analytics")] // need tide delegation to delegate AGAIN for the agent resource (so agent can decrypt)
+	[RequireExchangeApproval(ApprovalRequirement.TideEnabled, "analytics")] // need tide delegation to delegate AGAIN for the analytics resource (so it can unlock)
 	[HttpGet("PersonalSummary")]
-	public async Task<IActionResult> PersonalSummary([FromQuery] Guid patientId)
-	{
-		var patient = await database.GetPatient(patientId);
-		if (patient is null) return NotFound("patient not found");
-
-		// send request to agent service to get medical summary, given the encrypted patient medical details
-		var asgardClient = asgard.GetHttpClient("analytics");
-		Console.WriteLine("SENDING");
-		var response = await asgardClient.GetAsync("https://localhost:3001/analytics/personal?id=" + patientId);
-		//response.EnsureSuccessStatusCode();
-		Console.WriteLine("SENT");
-
-		// debug: what the analytics service answered. Only the response is printed - the request's headers can carry the
-		// exchanged bearer token.
-		var body = await response.Content.ReadAsStringAsync();
-		Console.WriteLine($"analytics answered {(int)response.StatusCode} {response.ReasonPhrase} over HTTP/{response.Version}");
-		foreach (var header in response.Headers.Concat(response.Content.Headers))
-			Console.WriteLine($"  {header.Key}: {string.Join(", ", header.Value)}");
-		Console.WriteLine($"  body ({body.Length} chars): {(body.Length > 2000 ? body[..2000] + "..." : body)}");
-
-		return Ok(body);
-	}
+	public Task<IActionResult> PersonalSummary([FromQuery] Guid patientId) => AskAnalytics($"personal?id={patientId}");
 
 	/// <summary>
-	/// Get the average patient age from the agent service;
+	/// Get the average patient age from the analytics service, which unlocks only the ages.
 	/// </summary>
-	/// <param name="patientId"></param>
-	/// <returns></returns>
-	[RequireExchangeApproval(ApprovalRequirement.TideEnabled, "agent")] // need tide delegation to delegate AGAIN for the agent resource (so agent can decrypt)
+	[RequireExchangeApproval(ApprovalRequirement.TideEnabled, "analytics")] // need tide delegation to delegate AGAIN for the analytics resource (so it can unlock)
 	[HttpGet("AverageAge")]
-	public async Task<IActionResult> AverageAge()
-	{
-		var allEncryptedAges = await database.GetAllAges();
+	public Task<IActionResult> AverageAge() => AskAnalytics("average-age");
 
-		var asgardClient = asgard.GetHttpClient("agent");
-		var response = await asgardClient.PostAsJsonAsync("http://localhost:3001/analytics/age_average", allEncryptedAges);
-		response.EnsureSuccessStatusCode();
-		return Ok(await response.Content.ReadAsStreamAsync());
+	/// <summary>
+	/// Calls the analytics service over mutual TLS, on behalf of the logged-in user, and passes its answer on. The
+	/// analytics service reads the patient ciphers from the database itself, so only the patient id goes over.
+	/// </summary>
+	private async Task<IActionResult> AskAnalytics(string pathAndQuery)
+	{
+		// in compose both apps share one network, so localhost reaches the analytics service there too
+		var response = await asgard.GetHttpClient("analytics").GetAsync("https://localhost:3001/analytics/" + pathAndQuery);
+		return StatusCode((int)response.StatusCode, await response.Content.ReadAsStringAsync());
 	}
 }
 
@@ -208,26 +175,6 @@ public class Database(NpgsqlDataSource dataSource)
 		command.Parameters.AddWithValue("age", patient.EncAge);
 		command.Parameters.AddWithValue("medicalDetails", patient.EncMedicalDetails);
 		await command.ExecuteNonQueryAsync();
-	}
-
-	/// <summary>The patient's ciphers, or null if there is no patient with that id.</summary>
-	public async Task<EncryptedPatient?> GetPatient(Guid id)
-	{
-		await using var command = dataSource.CreateCommand("SELECT personal_info, age, medical_details FROM patients WHERE id = @id");
-		command.Parameters.AddWithValue("id", id);
-		await using var reader = await command.ExecuteReaderAsync();
-		if (!await reader.ReadAsync()) return null;
-		return new EncryptedPatient(reader.GetFieldValue<byte[]>(0), reader.GetFieldValue<byte[]>(1), reader.GetFieldValue<byte[]>(2));
-	}
-
-	/// <summary>Every patient's age cipher - the ages on their own, with nothing that says whose they are.</summary>
-	public async Task<byte[][]> GetAllAges()
-	{
-		await using var command = dataSource.CreateCommand("SELECT age FROM patients");
-		await using var reader = await command.ExecuteReaderAsync();
-		var ages = new List<byte[]>();
-		while (await reader.ReadAsync()) ages.Add(reader.GetFieldValue<byte[]>(0));
-		return [.. ages];
 	}
 
 	/// <summary>The change request TideCloak raised for the policy, or null if the policy was never submitted or needed none.</summary>

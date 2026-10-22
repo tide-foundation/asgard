@@ -237,7 +237,7 @@ The [example apps](aspnet/Tide.Asgard.AspNetCore/Examples/) each have their own 
 |---|---|
 | [StandardResourceDelegation](aspnet/Tide.Asgard.AspNetCore/Examples/StandardResourceDelegation/) | A backend fetching TideCloak's user list on behalf of the logged-in user |
 | [LockingUserDataWithTide](aspnet/Tide.Asgard.AspNetCore/Examples/LockingUserDataWithTide/) | Adding a policy at first use, and locking user data with the Tide network |
-| [ResourceToResourceDelegation](aspnet/Tide.Asgard.AspNetCore/Examples/ResourceToResourceDelegation/) | A web app storing locked patient data, and calling an analytics service for the user over mTLS — dockerized |
+| [ResourceToResourceDelegation](aspnet/Tide.Asgard.AspNetCore/Examples/ResourceToResourceDelegation/) | A web app storing locked patient data, and an analytics service it calls for the user over mTLS, which unlocks and analyses that data — dockerized |
 
 
 ## License

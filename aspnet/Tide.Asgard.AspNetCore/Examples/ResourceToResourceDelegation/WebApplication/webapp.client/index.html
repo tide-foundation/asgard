@@ -46,13 +46,16 @@
 
     <section>
       <h2>Get Data Analytics</h2>
-      <p>Web application server queries analytics server under your session context (through delegation).</p>
+      <p>
+        The web application asks the analytics service on your behalf, passing your delegation on. The analytics
+        service unlocks only what each answer needs, under the policy the data was locked with.
+      </p>
       <form id="summaries">
         <input name="patientId" placeholder="Patient id" required>
         <button value="MedicalSummary" disabled>Medical summary</button>
         <button value="PersonalSummary" disabled>Personal summary</button>
       </form>
-      <!-- sends only the age ciphers, which say nothing about whose age they are -->
+      <!-- unlocks only the age ciphers, which say nothing about whose age they are -->
       <button id="average-age" disabled>Average age of all patients</button>
     </section>
 

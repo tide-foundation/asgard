@@ -359,6 +359,8 @@ builder.AddAsgard(options => options.RequireHttpsMetadata = false) // local dev 
 public async Task<IActionResult> PersonalSummary([FromQuery] Guid id)
 ```
 
+That approval is Tide-secured too, so the analytics service can unlock the patient's details itself, as in [Unlock data](#unlock-data).
+
 Good to know:
 
 - The client only sends requests to `https://` URLs, and only once your backend's certificate has been approved.

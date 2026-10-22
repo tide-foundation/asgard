@@ -6,7 +6,7 @@
 |---|---|---|
 | `StandardResourceDelegation` | A DPoP-protected endpoint that fetches TideCloak's user list through delegation | plain JS |
 | `LockingUserDataWithTide` | Adding a policy at first use and locking text with the Tide network | React |
-| `ResourceToResourceDelegation` | A web app storing locked patient data in Postgres, and an analytics service it calls; fully dockerized | plain JS |
+| `ResourceToResourceDelegation` | A web app storing locked patient data in Postgres, and an analytics service it calls that unlocks and analyses it; fully dockerized | plain JS |
 
 The end-to-end sample, `Tide.Asgard.AspNetCore.Example/` (beside `Examples/`), has `Hello`, `Policy/Create`,
 `Account/Encrypt` and `Account/Decrypt`, each behind a button on a plain Vite page in `ClientApp/`. It is laid out
