@@ -1,6 +1,6 @@
 # Using Asgard
 
-This guide covers what you do with Asgard once it is set up: authenticating users, locking data under a policy, managing policies and exchanging tokens.
+This guide covers what you do with Asgard once it is set up: authenticating users, locking and unlocking data under a policy, managing policies and exchanging tokens.
 
 It assumes you have finished the setup steps in the [getting started guide](GETTING_STARTED.md). The snippets follow the [examples](aspnet/Tide.Asgard.AspNetCore/Examples/).
 
@@ -8,7 +8,7 @@ It assumes you have finished the setup steps in the [getting started guide](GETT
 
 Three things must be true for the examples below to work:
 
-- **Your API accepts DPoP-bound tokens** (`Binding.DPoP`, [getting started, step 2](GETTING_STARTED.md#2-register-asgard)). Browser callers get to locking, policy management and token exchange with DPoP.
+- **Your API accepts DPoP-bound tokens** (`Binding.DPoP`, [getting started, step 2](GETTING_STARTED.md#2-register-asgard)). Browser callers get to locking, unlocking, policy management and token exchange with DPoP.
 - **Your backend's certificate has been approved in TideCloak.** Asgard requests it on first start and collects it by itself once an admin approves — see [how that works](README.md#asgard-mtls-certificate-auto-registration). Until then, anything that needs TideCloak answers `503` with the header `Asgard-Exception: ResourceIdentityNotRegistered`.
 - **Your browser app calls your API through tidecloak-js** (`IAMService.fetch`, [getting started, step 3](GETTING_STARTED.md#3-connect-your-frontend)). It attaches the DPoP proof and answers Asgard's approval requests for you — see the [LockingUserDataWithTide](aspnet/Tide.Asgard.AspNetCore/Examples/LockingUserDataWithTide/lockinguserdatawithtide.client/src/App.jsx) example's page.
 
@@ -77,7 +77,7 @@ The roles come from the token's `realm_access` and `resource_access` claims, whi
 
 ### Let your backend act for the caller
 
-Locking data, managing policies and exchanging tokens all need your backend to act **on the caller's behalf**. The caller has to approve that first, and `[RequireExchangeApproval]` is how you ask:
+Locking and unlocking data, managing policies and exchanging tokens all need your backend to act **on the caller's behalf**. The caller has to approve that first, and `[RequireExchangeApproval]` is how you ask:
 
 ```csharp
 using Microsoft.AspNetCore.Authorization;
@@ -99,7 +99,7 @@ Put it on a controller or on a single action. There are two levels:
 | Level | The caller's approval is signed by | Use it for |
 | --- | --- | --- |
 | `ApprovalRequirement.Basic` (default) | the browser's DPoP key | managing policies, token exchange |
-| `ApprovalRequirement.TideEnabled` | the browser's DPoP key **and** the caller's Tide session key | locking data |
+| `ApprovalRequirement.TideEnabled` | the browser's DPoP key **and** the caller's Tide session key | locking and unlocking data |
 
 You don't handle the approval yourself. Asgard answers the first request with a `401` challenge, tidecloak-js signs the approval and retries, and Asgard reuses that approval until the exchanged token expires or the caller's token is refreshed. The full flow is drawn in [Asgard Resource Delegation](README.md#asgard-resource-delegation).
 
@@ -107,11 +107,13 @@ The attribute's second argument names the client the exchanged token is for, and
 
 Without the attribute, the calls in the sections below fail with `401` and the header `Asgard-Exception: DelegationProofNotFound`.
 
-## 2. Lock data with a policy
+## 2. Lock and unlock data with a policy
 
-A **lock context** represents one atomic lock operation. It tells the Tide network: *"lock all of these items using this specific policy."* You can lock many items in one context, but each context uses exactly one policy.
+A **lock context** ties your lock and unlock operations to one policy. Each `Lock` or `Unlock` call is one atomic operation that tells the Tide network: *"lock (or unlock) all of these items using this specific policy."* One call can handle many items, but each context uses exactly one policy.
 
 **Why does locking need a policy — shouldn't anyone be able to lock?** No. Imagine the database holding the Coca-Cola recipe: it would be a disaster if *any* employee could lock it. A policy states the logic that allows a caller to lock something — and because that logic is enforced during locking, the locked data is also **attested**: you know the locked recipe is legit, because only the CEO could have locked it.
+
+### Lock data
 
 Each item is described by an `ItemToLock`:
 
@@ -177,6 +179,58 @@ public class EmployeesController(IAspAsgardService asgardService, AppDbContext d
 
 Under the hood, `Lock()` uses the caller's approval to exchange their token for an application token and doken, fetches the policy from TideCloak (cached for five minutes), and asks the Tide network to lock the data under that policy. The full flow is drawn in [Encryption](README.md#encryption).
 
+### Unlock data
+
+Unlocking is where the policy decides who may read your data. Hand the ciphers back with the tags they were locked with, and the Tide network releases the data only if the policy allows this caller to unlock items with those tags — e.g. medical notes only for a caller who holds the HR role. The policy must also allow decryption: see `UseForDecryption()` in [Manage policies](#3-manage-policies).
+
+Each item is described by an `ItemToUnlock`:
+
+- `ItemId` — your identifier for the item
+- `Data` — the cipher, as `Lock()` returned it
+- `Tags` — the tags the item was locked with. They are tied to the cipher, and the policy's contract uses them to decide whether this caller may unlock it.
+
+Add an action to the `EmployeesController` above that reads an employee back, unlocking the fields `Create` locked:
+
+```csharp
+[HttpGet("{id}")]
+public async Task<IActionResult> Get(int id)
+{
+    var employee = await db.Employees.FindAsync(id);
+    if (employee is null) return NotFound();
+
+    // unlock with the same tags the fields were locked with
+    var unlockOptions = new UnlockOptions()
+        .AddItemToUnlock(new ItemToUnlock
+        {
+            ItemId = "date-of-birth",
+            Tags = ["staff data", "date of birth"],
+            Data = employee.DateOfBirthCipher,
+        })
+        .AddItemToUnlock(new ItemToUnlock
+        {
+            ItemId = "medical-notes",
+            Tags = ["staff data", "medical"],
+            Data = employee.MedicalNotesCipher,
+        });
+
+    UnlockResponse response = await asgardService.CreateLockContext()
+        .UsePolicy("hr-staff-data-policy")
+        .Unlock(unlockOptions);
+
+    return Ok(new
+    {
+        employee.Name,
+        DateOfBirth = Encoding.UTF8.GetString(response.GetUnlockedItemById("date-of-birth").PlainText.Span),
+        MedicalNotes = Encoding.UTF8.GetString(response.GetUnlockedItemById("medical-notes").PlainText.Span),
+    });
+}
+```
+
+- `Unlock()` returns an `UnlockResponse`. Plain data comes back in the same order the items were added (`response.UnlockedItems`), or look one up with `GetUnlockedItemById`.
+- Each `PlainText` is raw bytes (`ReadOnlyMemory<byte>`). Decode it the way you encoded it before locking — here with `Encoding.UTF8.GetString`.
+
+Under the hood, `Unlock()` gets the application token, doken and policy the same way `Lock()` does. The Tide network checks the policy, and each node returns its partial decryption of the items' keys. Asgard combines them and decrypts on your backend, so the plain data never passes through the Tide network, and the network's key never exists anywhere in full. The full flow is drawn in [Decryption](README.md#decryption).
+
 ## 3. Manage policies
 
 A **policy provider** is the single source of policies for your application. `TidecloakPolicyProvider` stores them in TideCloak. Register it once in `Program.cs`, then inject it into the controller that manages your policies:
@@ -187,7 +241,7 @@ builder.Services.AddScoped<TidecloakPolicyProvider>();
 
 The provider talks to TideCloak as your backend acting for the caller, so hand it the application token before you use it. `ExchangeContextTokenForApplicationToken()` exchanges the caller's token the first time and serves it from the cache afterwards.
 
-Build a policy with `PolicyBuilder`, passing your vendor id and contract id. Here we create the `hr-staff-data-policy` used by the lock example above, with the `SimpleTagBasedDecryption:1` contract the examples use:
+Build a policy with `PolicyBuilder`, passing your vendor id and contract id. Here we create the `hr-staff-data-policy` used by the examples above, with the `SimpleTagBasedDecryption:1` contract the examples use:
 
 ```csharp
 using Microsoft.AspNetCore.Authorization;
@@ -212,6 +266,7 @@ public class PoliciesController(IAspAsgardService asgardService, TidecloakPolicy
 
         policyBuilder.BypassExplicitUserConsent();
         policyBuilder.UseForEncyption();
+        policyBuilder.UseForDecryption();
 
         var changeRequestId = await policyProvider.AddPolicyWithChangeRequest(
             "hr-staff-data-policy", policyBuilder.BuildPolicy());
@@ -223,8 +278,9 @@ public class PoliciesController(IAspAsgardService asgardService, TidecloakPolicy
 }
 ```
 
-- `BypassExplicitUserConsent()` — executing the policy does not require explicit approval from other Tide users.
+- `BypassExplicitUserConsent()` — executing the policy does not require explicit approval from other Tide users. Lock and unlock requests rely on this, so every policy they use needs it.
 - `UseForEncyption()` — allow this policy to serve encryption (locking) requests.
+- `UseForDecryption()` — allow this policy to serve decryption (unlocking) requests.
 
 `AddPolicyWithChangeRequest` uploads the new policy to TideCloak. If **QEA** (Quorum-Enforced Authorization) is enabled, it returns a change request id — the policy takes effect once the quorum approves it. If QEA is disabled, it returns `null` and the policy is live immediately.
 

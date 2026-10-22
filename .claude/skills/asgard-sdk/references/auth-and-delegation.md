@@ -1,4 +1,4 @@
-# Auth, delegation, token exchange, policies and locking
+# Auth, delegation, token exchange, policies, locking and unlocking
 
 ## Backend setup (Program.cs)
 
@@ -42,7 +42,7 @@ app.MapControllers();
 - It is an **MVC filter**: put it on controllers or actions. It does nothing on minimal-API endpoints.
 - Levels:
   - `ApprovalRequirement.Basic` - signed with the browser's DPoP key. Enough for TideCloak APIs (policies, users).
-  - `ApprovalRequirement.TideEnabled` - also signed with the user's Tide session key. Needed for locking (gives a doken).
+  - `ApprovalRequirement.TideEnabled` - also signed with the user's Tide session key. Needed for locking and unlocking (gives a doken).
 - `exchangeTargetResource` - the client the exchanged token is for (default: this backend).
 - The flow: a `401` with `Resource-Delegation-Key` and `Resource-Delegation-Challenge` headers. The challenge is signed
   over the token's **raw `jti`** - don't hash it, tidecloak-js signs the raw value. tidecloak-js only answers when the
@@ -70,21 +70,38 @@ if (await policies.GetPolicy(id) is null)                      // missing, or wa
 ```
 
 Build the bytes with `new PolicyBuilder(vendorId, "SimpleTagBasedDecryption:1")` plus `BypassExplicitUserConsent()`,
-`UseForEncyption()` (sic), then `BuildPolicy()`.
+`UseForEncyption()` (sic) to lock and `UseForDecryption()` to unlock, then `BuildPolicy()`. Lock and unlock requests
+(`PolicyEnabledEncryption:1`, `PolicyEnabledDecryption:1`) support implicit approval only, so their policies need
+`BypassExplicitUserConsent()`.
 
-## Locking
+## Locking and unlocking
 
 ```csharp
-var response = await asgard.CreateLockContext(new LockOptions()
-		.AddItemToLock(new ItemToLock { ItemId = "notes", Tags = ["medical"], Data = bytes }))
+var locked = await asgard.CreateLockContext()
 	.UsePolicy(policyId)
-	.Lock();
-var cipher = response.GetLockedItemById("notes").Cipher; // ReadOnlyMemory<byte>
+	.Lock(new LockOptions()
+		.AddItemToLock(new ItemToLock { ItemId = "notes", Tags = ["medical"], Data = bytes }));
+var cipher = locked.GetLockedItemById("notes").Cipher; // ReadOnlyMemory<byte>
+
+var unlocked = await asgard.CreateLockContext()
+	.UsePolicy(policyId)
+	.Unlock(new UnlockOptions()
+		.AddItemToUnlock(new ItemToUnlock { ItemId = "notes", Tags = ["medical"], Data = cipher }));
+var text = Encoding.UTF8.GetString(unlocked.GetUnlockedItemById("notes").PlainText.Span);
 ```
 
-- One lock context = one policy. Tags are bound to the cipher; the policy decides who may lock which tags.
-- The action needs `[RequireExchangeApproval(ApprovalRequirement.TideEnabled)]`.
-- The SDK has no unlock API.
+- `CreateLockContext()` returns one `ILockContext` with both `Lock(LockOptions)` and `Unlock(UnlockOptions)`. One
+  context = one policy.
+- Tags are bound to the cipher: unlock with the tags it was locked with. The policy's contract decides who may lock or
+  unlock which tags, and the policy must allow the operation (`UseForEncyption()` / `UseForDecryption()`).
+- Both actions need `[RequireExchangeApproval(ApprovalRequirement.TideEnabled)]`.
+- Unlocking (`LockClientManager.Unlock` in `../project/ork/Ork.Clients`): each ORK applies its key share to the
+  cipher's key, Asgard combines the replies into a per-item key and decrypts in the backend. The plain text exists only
+  in the backend.
+- Results: `LockedItems` / `UnlockedItems` in the order the items were added, or by id with `GetLockedItemById` /
+  `GetUnlockedItemById`.
+- `Cipher` and `PlainText` are `ReadOnlyMemory<byte>`. Decode with `Encoding.UTF8.GetString(x.Span)` - string
+  concatenation prints the type name (`System.ReadOnlyMemory<Byte>[10]`), not the data.
 
 ## Errors
 

@@ -1,13 +1,13 @@
 ---
 name: asgard-sdk
-description: How to work on the Asgard repo - TideCloak's server-side SDK for ASP.NET Core - safely and correctly. Covers what lives where, how to build, the rules about live credentials and the sibling checkouts the SDK builds against, and how DPoP, resource delegation, token exchange, Tide locking, policies, mTLS enrollment and the example apps fit together. Use it whenever you work anywhere under /home/sam/asgard - SDK code in aspnet/Tide.Asgard.AspNetCore, the example apps and their Docker setup, tests/aspnet, or README / USAGE / GETTING_STARTED - even for a small edit, a review or a question about how something works.
+description: How to work on the Asgard repo - TideCloak's server-side SDK for ASP.NET Core - safely and correctly. Covers what lives where, how to build, the rules about live credentials and the sibling checkouts the SDK builds against, and how DPoP, resource delegation, token exchange, Tide locking and unlocking, policies, mTLS enrollment and the example apps fit together. Use it whenever you work anywhere under /home/sam/asgard - SDK code in aspnet/Tide.Asgard.AspNetCore, the example apps and their Docker setup, tests/aspnet, or README / USAGE / GETTING_STARTED - even for a small edit, a review or a question about how something works.
 ---
 
 # Asgard SDK
 
 Asgard lets an ASP.NET Core backend use TideCloak: it verifies TideCloak logins (DPoP-bound tokens), gets the user's
-approval to act for them (resource delegation), exchanges tokens, locks data with the Tide network without ever holding
-the key, and gives the backend its own certificate identity for mTLS. The browser side always uses **tidecloak-js**.
+approval to act for them (resource delegation), exchanges tokens, locks and unlocks data with the Tide network without
+ever holding its key, and gives the backend its own certificate identity for mTLS. The browser side always uses **tidecloak-js**.
 
 Nothing is released - it is all greenfield. Names change often, so treat the names here as pointers: grep the code
 for each one before you use it, and never write comments that talk about "old" or "legacy" behaviour.
@@ -16,10 +16,10 @@ for each one before you use it, and never write comments that talk about "old" o
 
 | Path | What it is |
 |---|---|
-| `aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/` | The main SDK (`Tide.Asgard.AspNetCore.Authentication.csproj`): `AddAsgard`, delegation, token exchange, locking, policies, mTLS, and DPoP validation and `UseTide_over_DPoP` in `DPoP/` |
+| `aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/` | The main SDK (`Tide.Asgard.AspNetCore.Authentication.csproj`): `AddAsgard`, delegation, token exchange, locking and unlocking, policies, mTLS, and DPoP validation and `UseTide_over_DPoP` in `DPoP/` |
 | `aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/` | Crypto helpers, `PolicyBuilder`, `AsgardException` |
 | `aspnet/Tide.Asgard.AspNetCore/Examples/` | Example apps - see [examples-and-docker.md](references/examples-and-docker.md) |
-| `aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/` | End-to-end sample |
+| `aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/` | End-to-end sample: lock and unlock from a plain Vite page - see [examples-and-docker.md](references/examples-and-docker.md) |
 | `tests/aspnet/` | Playwright tests with their own test server; they need the local Tide stack (see its README) |
 | `src/`, root `package.json` | A separate TypeScript package (`asgard-tide`) - not covered here |
 | `README.md`, `GETTING_STARTED.md`, `USAGE.md`, `EXTENSION.md` | Docs. README diagrams are mermaid, rendered by GitHub |
@@ -51,11 +51,12 @@ for each one before you use it, and never write comments that talk about "old" o
    retries, all inside the same `fetch`.
 4. Asgard **exchanges** the user's token with TideCloak over **mTLS**, using the backend's enrolled certificate. The new
    token is bound to that certificate.
-5. The backend uses that token for TideCloak's APIs (policies, users), and the **doken** for the Tide network (locking).
+5. The backend uses that token for TideCloak's APIs (policies, users), and the **doken** for the Tide network (locking and
+   unlocking).
 
 ## Read next
 
-- Auth, delegation, token exchange, policies, locking, tidecloak-js → [auth-and-delegation.md](references/auth-and-delegation.md)
+- Auth, delegation, token exchange, policies, locking and unlocking, tidecloak-js → [auth-and-delegation.md](references/auth-and-delegation.md)
 - mTLS enrollment, certificates, calling other resources, certificate-bound tokens → [mtls.md](references/mtls.md)
 - Example apps, running locally, Docker and compose → [examples-and-docker.md](references/examples-and-docker.md)
 

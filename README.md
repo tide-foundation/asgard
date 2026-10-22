@@ -176,6 +176,37 @@ sequenceDiagram
     Backend->>TideNetwork: Encrypt user details under policy, authorized with doken
     TideNetwork-->>Backend: Encrypted details
 ```
+### Decryption
+```mermaid
+sequenceDiagram
+    actor User
+    box rgba(59, 130, 246, 0.15) Your application
+        participant Browser@{ "type": "boundary", "alias": "Browser Client<br/>(using tidecloak-js)" }
+        participant Backend@{ "type": "control", "alias": "ASP.NET Backend<br/>(using Asgard)" }
+    end
+    box rgba(139, 92, 246, 0.15)
+        participant TideCloak@{ "type": "entity", "alias": "TideCloak IAM" }
+    end
+    box rgba(16, 185, 129, 0.15)
+        participant TideNetwork@{ "type": "collections", "alias": "Tide Network" }
+    end
+
+    User->>Browser: Login
+    Browser->>TideCloak: Redirect
+    TideCloak->>TideNetwork: Sign user token
+    TideNetwork-->>TideCloak: Signed token
+    TideCloak-->>Browser: User token tied to browser stored DPoP key
+
+    Browser->>Backend: Show my details
+    Note over Browser,TideNetwork: Backend gets an mTLS bound token + doken through Tide-secured delegation<br/>(see Asgard Resource Delegation above)
+    Backend->>TideCloak: Get decryption policy,<br/>authorized with mTLS bound token
+    TideCloak-->>Backend: Policy
+    Backend->>TideNetwork: Decrypt user details under policy, authorized with doken
+    TideNetwork->>TideNetwork: Policy checks the caller<br/>and the details' tags
+    TideNetwork-->>Backend: Each node's partial decryption
+    Backend->>Backend: Combine partial decryptions,<br/>decrypt details
+    Backend-->>Browser: User details
+```
 
 
 ## 5 concepts to know
@@ -196,7 +227,7 @@ The .NET solution lives at [aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.sln](aspne
 
 | Project | Purpose |
 |---|---|
-| [Tide.Asgard.AspNetCore.Authentication](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/) | Main SDK — `AddAsgard`, DPoP- and mTLS-bound token validation, resource delegation, locking, policies, token exchange |
+| [Tide.Asgard.AspNetCore.Authentication](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore/) | Main SDK — `AddAsgard`, DPoP- and mTLS-bound token validation, resource delegation, locking and unlocking, policies, token exchange |
 | [Tide.Asgard.Core](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.Core/) | Cryptography primitives (Ed25519 / EdDSA), policy helpers |
 | [Tide.Asgard.AspNetCore.Example](aspnet/Tide.Asgard.AspNetCore/Tide.Asgard.AspNetCore.Example/) | End-to-end sample |
 

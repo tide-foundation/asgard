@@ -1,6 +1,6 @@
 # Getting started with Asgard
 
-This guide integrates Asgard into a new ASP.NET Core project: by the end, your backend verifies TideCloak logins and is ready for locking, policy management and token exchange.
+This guide integrates Asgard into a new ASP.NET Core project: by the end, your backend verifies TideCloak logins and is ready for locking and unlocking data, policy management and token exchange.
 
 The steps follow the [StandardResourceDelegation](aspnet/Tide.Asgard.AspNetCore/Examples/StandardResourceDelegation/) example, the smallest app that does all of this. New to TideCloak? Read the [5 concepts to know](README.md#5-concepts-to-know) first.
 
@@ -91,7 +91,7 @@ app.Run();
 
 Under the hood, `AddAsgard` calls `AddKeycloakWebApiAuthentication` from [Keycloak.AuthServices](https://github.com/nikiforovall/keycloak-authorization-services-dotnet) with your adapter config. The caller arrives as `User` just as in any Keycloak-protected API, and Keycloak.AuthServices' role-based authorization works on it too — see [Use the caller's identity and roles](USAGE.md#use-the-callers-identity-and-roles).
 
-`RequireTokenBinding` sets which tokens your API accepts, and registers everything the [usage guide](USAGE.md) builds on: `IAspAsgardService` for locking, a policy provider backed by TideCloak, the token exchange service, and an exception handler that translates Asgard errors into `Asgard-*` response headers (which is why `app.UseExceptionHandler()` is required). Always call it.
+`RequireTokenBinding` sets which tokens your API accepts, and registers everything the [usage guide](USAGE.md) builds on: `IAspAsgardService` for locking and unlocking, a policy provider backed by TideCloak, the token exchange service, and an exception handler that translates Asgard errors into `Asgard-*` response headers (which is why `app.UseExceptionHandler()` is required). Always call it.
 
 ### Token binding
 
@@ -144,4 +144,4 @@ const response = await IAMService.fetch("/users", {
 
 ## Next: use it
 
-Setup is done. The [usage guide](USAGE.md) covers what comes next: protecting endpoints, locking data with a policy, managing policies and calling other services for the caller.
+Setup is done. The [usage guide](USAGE.md) covers what comes next: protecting endpoints, locking and unlocking data with a policy, managing policies and calling other services for the caller.

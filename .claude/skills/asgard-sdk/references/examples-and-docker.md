@@ -8,6 +8,12 @@
 | `LockingUserDataWithTide` | Adding a policy at first use and locking text with the Tide network | React |
 | `ResourceToResourceDelegation` | A web app storing locked patient data in Postgres, and an analytics service it calls; fully dockerized | plain JS |
 
+The end-to-end sample, `Tide.Asgard.AspNetCore.Example/` (beside `Examples/`), has `Hello`, `Policy/Create`,
+`Account/Encrypt` and `Account/Decrypt`, each behind a button on a plain Vite page in `ClientApp/`. It is laid out
+differently from the examples: `npm run build` in `ClientApp/` writes the gitignored `wwwroot/`, and building the server
+does not build the page. Its policy id is a fresh GUID and its ciphers live in a static field, so after a restart you set
+up the policy again and encrypt before you decrypt.
+
 The example code is the user's own design - make the change asked for, keep it minimal, and keep it looking standard.
 
 ## How an example is laid out
