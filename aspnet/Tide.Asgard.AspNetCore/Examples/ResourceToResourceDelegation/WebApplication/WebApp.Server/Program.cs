@@ -113,9 +113,9 @@ public class ServerController(IAspAsgardService asgard, TidecloakPolicyProvider 
 				Data = Encoding.UTF8.GetBytes(patient.MedicalDetails)
 			});
 		
-		var response = await asgard.CreateLockContext(lockOptions)
+		var response = await asgard.CreateLockContext()
 			.UsePolicy(policy.Id)
-			.Lock();
+			.Lock(lockOptions);
 		
 		var encryptedPII = response.GetLockedItemById("patient personal info");
 		var encryptedAge = response.GetLockedItemById("anonymous patient age");

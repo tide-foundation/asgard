@@ -67,7 +67,7 @@ public class LockingController(IAspAsgardService asgard, TidecloakPolicyProvider
 		});
 
 		// the Tide Network locks the data under the policy - no key ever reaches this backend
-		var response = await asgard.CreateLockContext(options).UsePolicy(policy.Id).Lock();
+		var response = await asgard.CreateLockContext().UsePolicy(policy.Id).Lock(options);
 
 		// the cipher is what an app would store - here it goes straight back, and nothing is kept
 		return Ok(new { policy = policy.Id, cipher = Convert.ToBase64String(response.GetLockedItemById("text").Cipher.Span) });
