@@ -1,0 +1,71 @@
+{
+  "name": "mtls-exchange",
+  "hypothesis": "Testbed for a later token-exchange test. The whole realm shape is built in the PRE-IGA setup[] phase — an SPA public client `frontend` (localhost:3000, redirect localhost:3000/*) carrying an oidc-audience-mapper that injects `backend` into aud, a confidential `backend` client authenticated by `tide-mtls` with Standard Token Exchange v2 enabled, and a basic user alice — so the adopt-scan at the enable-IGA transition attests every entity in one pass (ADOPT_CLIENT / ADOPT_USER / ADOPT_PROTOCOL_MAPPER), rather than each entity carrying its own governed CREATE_* CR. Because the audience mapper is present BEFORE attestation (unlike audience-mapper-aud-attestation, which adds it in steps[] as a governed ADD_PROTOCOL_MAPPER), the attested client unit already includes aud=backend. Predicted: alice's frontend password-grant token ORK-signs (EdDSA) with aud=[backend, account], azp=frontend.",
+  "tags": ["ork", "testbed", "pre-iga", "adopt-scan", "audience-mapper", "token-exchange", "tide-mtls", "spa"],
+  "setup": [
+    {
+      "kind": "client.create",
+      "args": {
+        "clientId": "frontend",
+        "name": "frontend (SPA)",
+        "publicClient": true,
+        "standardFlowEnabled": true,
+        "directAccessGrantsEnabled": true,
+        "rootUrl": "http://localhost:3000",
+        "baseUrl": "/",
+        "redirectUris": ["http://localhost:3000/*"],
+        "webOrigins": ["http://localhost:3000"],
+        "attributes": {
+          "post.logout.redirect.uris": "http://localhost:3000/*"
+        }
+      }
+    },
+    {
+      "kind": "client.create",
+      "args": {
+        "clientId": "backend",
+        "name": "backend (confidential, tide-mtls)",
+        "publicClient": false,
+        "clientAuthenticatorType": "tide-mtls",
+        "standardFlowEnabled": false,
+        "directAccessGrantsEnabled": false,
+        "serviceAccountsEnabled": false,
+        "fullScopeAllowed": true,
+        "attributes": { "standard.token.exchange.enabled": "true" }
+      }
+    },
+    {
+      "kind": "client.addProtocolMapper",
+      "args": {
+        "clientId": "frontend",
+        "mapper": {
+          "name": "backend-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "backend",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      }
+    },
+    {
+      "kind": "user.create",
+      "args": {
+        "username": "alice",
+        "password": "Passw0rd!",
+        "email": "alice@example.com",
+        "firstName": "Alice",
+        "lastName": "Anderson"
+      },
+      "as": "alice"
+    }
+  ],
+  "probe": {
+    "kind": "token.request",
+    "args": { "grant": "password", "clientId": "frontend", "user": "$alice", "password": "Passw0rd!" }
+  },
+  "expect": { "side": "ork", "outcome": "sign" }
+}

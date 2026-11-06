@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="lockinguserdatawithtide.client/lockinguserdatawithtide.client.esproj" />
+  <Project Path="LockingUserDataWithTide.Server/LockingUserDataWithTide.Server.csproj" />
+</Solution>

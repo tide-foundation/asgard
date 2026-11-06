@@ -24,15 +24,18 @@
     <PackageReference Include="Keycloak.AuthServices.Authentication" Version="2.9.0" />
     <PackageReference Include="Keycloak.AuthServices.Authorization" Version="2.9.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\..\..\project\ork\Ork.Clients\Ork.Clients.csproj" />
     <ProjectReference Include="..\Tide.Asgard.Core\Tide.Asgard.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="ClientCeritifcation\Views\index.html" />
+    <!-- UseTide_over_DPoP serves the page from the Tide.Asgard.AspNetCore.DPoP.Views namespace -->
+    <EmbeddedResource Include="DPoP\Views\tide_dpop_auth.html" LogicalName="Tide.Asgard.AspNetCore.DPoP.Views.tide_dpop_auth.html" />
   </ItemGroup>
 
   <ItemGroup>
