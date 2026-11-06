@@ -106,9 +106,9 @@ internal class TideApprovalFilter(IResourceKeyProvider deviceKeyProvider, IAsgar
 
 		await base.OnAuthorizationAsync(context); // run base validations
 
-		// Need to ensure ValidatedDPoPResourceDelegationProof is present in HttpContext.Items, which is set by the base DPoPExchangeApprovalFilter
+		// Need to ensure ValidatedResourceDelegationProof is present in HttpContext.Items, which is set by the base ResourceExchangeApprovalFilter
 		// The approval might short circuit if the cache already has a token, but for the tide delegation we also need a fresh proof for the request
-		if(!context.HttpContext.Items.TryGetValue("ValidatedDPoPResourceDelegationProof", out var enclaveDelegationProof))
+		if(!context.HttpContext.Items.TryGetValue("ValidatedResourceDelegationProof", out var enclaveDelegationProof))
 		{
 			Helpers.RequestResourceDelegation(context, context.HttpContext.User.GetId(), _deviceKeyProvider);
 			context.HttpContext.Response.Headers["Require-Tide-Delegation"] = "true";
@@ -446,7 +446,7 @@ internal class ResourceExchangeApprovalFilter : IAsyncAuthorizationFilter
 			return;
 		}
 
-		context.HttpContext.Items["ValidatedDPoPResourceDelegationProof"] = dpopResourceDelegation.ToString();
+		context.HttpContext.Items["ValidatedResourceDelegationProof"] = dpopResourceDelegation.ToString();
 	}
 	public static void SetChallenge(AuthorizationFilterContext context, string? error = null, string? description = null)
 	{

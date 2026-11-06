@@ -6,16 +6,17 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.VisualBasic;
 using Ork.Clients.Providers;
 using System;
 using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Reflection.PortableExecutable;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Tide.Asgard.AspNetCore.DPoP;
 using Tide.Asgard.Core;
 using Tide.Asgard.Core.Crypto.Ed25519;
 using Tide.Asgard.Core.PolicyHelpers;
@@ -45,46 +46,64 @@ internal class TokenExchangeService(IHttpClientFactory factory, IHttpContextAcce
 		{
 			throw new InvalidOperationException($"{nameof(TokenExchangeService)} can only be used in authenticated contexts.");
 		}
-		// Determine if its an access token or dpop token
-		//   - DPoP tokens will have both an "Authorization: DPoP ..." header and a "DPoP" proof header
-		//   - Bearer tokens will only have an "Authorization: Bearer ..." header
-		//   - ignore dokens as the user will never manage those themselves -> this SDK will
-		var isDPoP = context.Request.Headers.ContainsKey("DPoP") &&
-					 context.Request.Headers.TryGetValue("Authorization", out var auth) &&
-					 auth.ToString().StartsWith("DPoP ", StringComparison.OrdinalIgnoreCase);
 
-		if (isDPoP)
-			return await ExchangeDPoPToken(requestingClientId, requestedAudience);
+		if(!context.Request.Headers.TryGetValue("Authorization", out var auth))
+			throw new InvalidOperationException("Authorization header is missing.");
+
+		string token;
+		if (auth.ToString().StartsWith("DPoP ", StringComparison.OrdinalIgnoreCase))
+		{
+			// ensure token has cnf.jkt claim, IN CASE this service was called without a jkt binding filter
+			if(!HasConfirmation(context.User, Constants.DPoP.JwkThumbprint))
+				throw new InvalidOperationException("DPoP token must contain cnf.jkt claim for token exchange.");
+
+			token = auth.ToString().Substring("DPoP ".Length).Trim();
+		}
+		else if (auth.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+		{
+			// ensure token has cnf.x5t#S256 claim, IN CASE this service was called without a mtls binding filter
+			if(!HasConfirmation(context.User, "x5t#S256"))
+				throw new InvalidOperationException("Bearer token must contain cnf.x5t#S256 claim for token exchange.");
+
+			token = auth.ToString().Substring("Bearer ".Length).Trim();
+		}
 		else
-			throw new InvalidOperationException("Only DPoP token exchange is supported");
+			throw new InvalidOperationException("Authorization header must be either DPoP or Bearer.");
+
+		return await ExchangeToken(token, requestingClientId, requestedAudience);
+	}
+
+	// cnf arrives as a single JSON claim, e.g. {"jkt":"...","kc-jkt-type":"DPoP"}
+	private static bool HasConfirmation(ClaimsPrincipal user, string thumbprintName)
+	{
+		var cnf = user.FindFirst(Constants.DPoP.Cnf)?.Value;
+		if (string.IsNullOrEmpty(cnf)) return false;
+		try
+		{
+			using var document = JsonDocument.Parse(cnf);
+			return document.RootElement.ValueKind == JsonValueKind.Object
+				&& document.RootElement.TryGetProperty(thumbprintName, out var thumbprint)
+				&& thumbprint.ValueKind == JsonValueKind.String
+				&& !string.IsNullOrEmpty(thumbprint.GetString());
+		}
+		catch (JsonException)
+		{
+			return false;
+		}
 	}
 
 	/// <summary>
 	/// Looks at the DPoP Header
 	/// </summary>
 	/// <returns></returns>
-	private async Task<TokenExchangeResponse> ExchangeDPoPToken(string requestingClientId, string? requestedAudience = null)
+	private async Task<TokenExchangeResponse> ExchangeToken(string subjectToken, string requestingClientId, string? requestedAudience = null)
 	{
 		var context = GetHttpContext();
-		if(!context.Items.TryGetValue("ValidatedDPoPResourceDelegationProof", out var dpopProofItem))
+		if(!context.Items.TryGetValue("ValidatedResourceDelegationProof", out var delegationProofItem))
 		{
 			throw new AsgardException(AsgardErrorCode.DelegationProofNotFound);
 		}
-		var dpopProof = dpopProofItem as string ?? throw new AsgardException(AsgardErrorCode.DelegationProofNotFound);
-
-		if (!context.Request.Headers.TryGetValue("Authorization", out var authHeader))
-			throw new UnauthorizedAccessException("Authorization header is missing.");
-		if (!context.Request.Headers.TryGetValue("DPoP", out var dpopProofHeader))
-			throw new UnauthorizedAccessException("DPoP header is missing.");
-
-		var headerValue = authHeader.ToString();
-
-		if (!headerValue.StartsWith("DPoP ", StringComparison.OrdinalIgnoreCase))
-			throw new UnauthorizedAccessException("Authorization header is not a DPoP token.");
-
-		var userDPoPToken = headerValue["DPoP ".Length..].Trim();
-
-		var client = factory.CreateClient("Tidecloak");
+		var delegationProof = delegationProofItem as string ?? throw new AsgardException(AsgardErrorCode.DelegationProofNotFound);
 
 		string? approverDelegationSignature = null;
 		if (context.Items.TryGetValue("ValidatedTideDelegationSignature", out var tideEnclaveApprovalItem))
@@ -96,17 +115,23 @@ internal class TokenExchangeService(IHttpClientFactory factory, IHttpContextAcce
 		{
 			["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange",
 			["client_id"] = requestingClientId,
-			["subject_token"] = userDPoPToken,
+			["subject_token"] = subjectToken,
 			["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
-			["actor_token"] = dpopProof,
+			["actor_token"] = delegationProof,
 			["actor_token_type"] = "urn:ietf:params:oauth:token-type:delegation+jwt"
 		};
 		if (approverDelegationSignature != null) forms["tide_delegation"] = approverDelegationSignature;
 		if (requestedAudience != null) forms["audience"] = requestedAudience;
 		var body = new FormUrlEncodedContent(forms);
 
+		return await ExecuteExchange(context, body, requestedAudience);
+	}
+	private async Task<TokenExchangeResponse> ExecuteExchange(HttpContext context, FormUrlEncodedContent content, string? requestedAudience)
+	{
+		var client = factory.CreateClient("Tidecloak");
+
 		var resp = await client.PostAsync(
-			$"protocol/openid-connect/token", body);
+			$"protocol/openid-connect/token", content);
 
 		if (!resp.IsSuccessStatusCode)
 		{
@@ -123,8 +148,6 @@ internal class TokenExchangeService(IHttpClientFactory factory, IHttpContextAcce
 
 		string accessToken = token.GetString() ?? throw new InvalidOperationException("Token exchange response contained a null access_token.");
 
-		Console.WriteLine($"Token exchange response contained an access_token: {accessToken}");
-
 		if (!result.TryGetProperty("expires_in", out var expiresIn))
 			throw new InvalidOperationException("Token exchange response did not contain an expires_in.");
 
@@ -138,7 +161,6 @@ internal class TokenExchangeService(IHttpClientFactory factory, IHttpContextAcce
 		string? applicationDoken = null;
 		if (result.TryGetProperty("doken", out var doken))
 		{
-			Console.WriteLine($"Token exchange response contained a doken: {doken.GetString()}");
 			// add doken to cache
 			applicationDoken = doken.GetString()!;
 			await cache.AddApplicationTideDoken(tokenId, applicationDoken, expiresAt);

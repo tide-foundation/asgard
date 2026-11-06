@@ -103,8 +103,7 @@ internal sealed class ClientMTLSAndExchangeHandler(string clientId, IHttpContext
 				var header = new Dictionary<string, object>
 				{
 					{ "alg", "ES256" },
-					{ "typ", "delegation+jwt" },
-					{ "bind", "mtls" }
+					{ "typ", "delegation+jwt" }
 				};
 				var payload = new Dictionary<string, object>
 				{
