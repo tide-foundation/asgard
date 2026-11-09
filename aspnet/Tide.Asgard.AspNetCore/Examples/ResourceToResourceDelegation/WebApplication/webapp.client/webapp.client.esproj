@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.VisualStudio.JavaScript.SDK/1.0.6887863">
+  <PropertyGroup>
+    <!-- Allows the build (or compile) script located on package.json to run on Build -->
+    <ShouldRunBuildScript>true</ShouldRunBuildScript>
+    <!-- Folder where production build objects will be placed - the server's web root, so it serves the page itself -->
+    <BuildOutputFolder>$(MSBuildProjectDirectory)\..\WebApp.Server\wwwroot</BuildOutputFolder>
+  </PropertyGroup>
+</Project>

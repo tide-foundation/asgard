@@ -1,43 +1,36 @@
 using Keycloak.AuthServices.Authentication;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Tide.Asgard.AspNetCore.Authentication;
+using Tide.Asgard.AspNetCore.Authentication.mTLS;
+using Tide.Asgard.AspNetCore.Authentication.SetupHelpers;
+using Tide.Asgard.AspNetCore.Authentication.TokenExchange;
 using Tide.Asgard.AspNetCore.DPoP;
-using Tide.Asgard.Core.Crypto.Ed25519;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder
+	.AddAsgard(opts =>
+	{
+		opts.RequireHttpsMetadata = false; // for local testing
+	})
+	.RequireTokenBinding(opts =>
+	{
+		opts.SupportBindings = Binding.DPoP | Binding.mTLS;
+	});
+
 builder.Services.AddControllers();
 
-builder.Services
-	.AddKeycloakWebApiAuthentication(builder.Configuration, options =>
-	{
-		options.RequireHttpsMetadata = false;
-		//options.TokenValidationParameters.IssuerSigningKey = Utils.GetEd25519IssuerKey(builder.Configuration);
-	});
-	//.WithDPoP(opts =>
-	//{
-	//	opts.Mode = DPoPModes.Required;
-	//}); // any api protected by this authentication scheme above will require dpop proofs
-
-builder.Services.AddTokenExchange(builder.Configuration);
-
-// add an abilitie to bind dashboard options from the configuration, but also allow us to set them here in code if we want to
-var dashboardOptionsFromConfig = new TidecloakDashboardOptions();
-builder.Configuration.GetSection("TidecloakDashboard").Bind(dashboardOptionsFromConfig);
-//builder.Services.AddAutoClientCeritificationToDashboard(dashboardOptionsFromConfig); // add auto rego abilities to this web app
-
-
 var app = builder.Build();
+
+app.UseExceptionHandler(); // needed
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-//app.UseTidecloakDashboard(dashboardOptionsFromConfig); // asgard!
 
-// they must do this for the single public client users use to log into the application
-//app.UseTideSecuredDPoP(builder.Configuration, "spa_client");
+app.UseTide_over_DPoP(builder.Configuration, "frontend"); // needed
 
 app.UseAuthentication();
 app.UseAuthorization();

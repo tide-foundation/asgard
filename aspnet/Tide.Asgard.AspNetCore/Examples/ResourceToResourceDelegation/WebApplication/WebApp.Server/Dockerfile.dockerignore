@@ -1,0 +1,13 @@
+# Build output and installed packages - the image builds its own
+**/bin/
+**/obj/
+**/obj\\*
+**/node_modules/
+**/wwwroot/
+
+# Secrets stay out of the image: Asgard's resource identity, and the adapter config, which compose mounts instead
+**/*.key
+**/*.csr
+**/*.crt
+**/*.pfx
+**/appsettings.json
