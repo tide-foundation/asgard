@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
 
     <PackageId>Tide.Asgard.AspNetCore.Authentication</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Tide Foundation Limited</Authors>
     <Company>Tide Foundation Limited</Company>
     <Description>ASP.NET Core authentication SDK for Tidecloak. Extends Keycloak.AuthServices with Ed25519 signing-key support and an OAuth 2.0 Token Exchange client. Derived from the Auth0 ASP.NET Core Authentication API (Apache-2.0).</Description>
@@ -18,6 +18,7 @@
     <RepositoryType>git</RepositoryType>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);PackReferencedProjects</TargetsForTfmSpecificBuildOutput>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,9 +30,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\project\ork\Ork.Clients\Ork.Clients.csproj" />
-    <ProjectReference Include="..\Tide.Asgard.Core\Tide.Asgard.Core.csproj" />
+    <!-- packed into this package's lib folder, so their package references are listed here too -->
+    <ProjectReference Include="..\..\..\..\project\ork\Ork.Clients\Ork.Clients.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\Tide.Asgard.Core\Tide.Asgard.Core.csproj" PrivateAssets="all" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <PackageReference Include="LazyCache.AspNetCore" Version="2.4.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.14" />
   </ItemGroup>
+
+  <Target Name="PackReferencedProjects" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths->WithMetadataValue('ReferenceSourceTarget', 'ProjectReference')->WithMetadataValue('Extension', '.dll'))" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <!-- UseTide_over_DPoP serves the page from the Tide.Asgard.AspNetCore.DPoP.Views namespace -->

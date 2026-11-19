@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
 
     <PackageId>Tide.Asgard.Core</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Tide Foundation Limited</Authors>
     <Company>Tide Foundation Limited</Company>
     <Description>Cryptography primitives (Ed25519 / EdDSA) for the Tide Asgard authentication SDK. Derived from ScottBrady.IdentityModel (Apache-2.0).</Description>
