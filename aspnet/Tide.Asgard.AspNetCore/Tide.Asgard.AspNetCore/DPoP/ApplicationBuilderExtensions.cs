@@ -30,7 +30,7 @@ public static class ApplicationBuilderExtensions
 				{
 					var headers = ctx.Context.Response.Headers;
 					headers.Remove("X-Frame-Options");
-					headers.ContentSecurityPolicy = "default-src 'self'; script-src 'unsafe-inline'";
+					headers.ContentSecurityPolicy = "default-src 'self'; script-src 'self' 'sha256-utc6UrebuHOyLd/2aiMXS/p1EDy9UZBDe/XEMKDw9Mc='; style-src 'self' 'sha256-1tYy8m3c1KLuGI2eID9TfLkc50Y+iSPJMpI7n/apN/w=' 'sha256-F7OJTdJYct4J+cQfuJUoDauitndqt8pAc8EbA8gwDPU='";
 					headers["Allow-CSP-From"] = "*";
 				}
 			}
